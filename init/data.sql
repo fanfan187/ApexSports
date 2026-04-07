@@ -12,7 +12,7 @@ SET NAMES utf8mb4;
 -- 密码使用BCrypt加密，此处的hash对应 "admin123"
 -- =============================================
 INSERT INTO `as_user` (`username`, `password`, `real_name`, `role`, `phone`, `email`, `status`) VALUES
-('admin', '$2a$10$N.zmdr9k7uOCQb376NoUnuTJ8iAt6Z5EHsM8lE9lBOsl7iAt6Z5EH', '系统管理员', 1, '13800000000', 'admin@apexsports.edu.cn', 1);
+('admin', '$2b$10$enCVZ57WpLyLIQg05mBADeJj10cl2CdCz5G4wYMH9XAQnAKRCu/W.', '系统管理员', 1, '13800000000', 'admin@apexsports.edu.cn', 1);
 
 -- =============================================
 -- 2. 学院表初始数据 (8个学院)

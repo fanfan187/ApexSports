@@ -70,7 +70,7 @@ spring:
 # MyBatis-Plus配置
 # =============================================
 mybatis-plus:
-  mapper-locations: classpath:mapper/*.xml
+  mapper-locations: classpath:mappers/*.xml
   type-aliases-package: com.fanfan.apexsports.entities
   configuration:
     map-underscore-to-camel-case: true

@@ -189,7 +189,7 @@ CREATE TABLE `as_participation` (
     `event_id` BIGINT NOT NULL COMMENT '项目ID',
     `competition_id` BIGINT DEFAULT NULL COMMENT '比赛场次ID',
     `lane_no` TINYINT DEFAULT NULL COMMENT '跑道号/道次',
-    ` bib_number` VARCHAR(20) DEFAULT NULL COMMENT '号码牌',
+    `bib_number` VARCHAR(20) DEFAULT NULL COMMENT '号码牌',
     `status` TINYINT NOT NULL DEFAULT 0 COMMENT '状态: 0-已报名, 1-检录通过, 2-已参赛, 3-弃权, 4-取消资格',
     `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',

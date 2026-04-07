@@ -20,5 +20,16 @@ services:
       --collation-server=utf8mb4_unicode_ci
       --default-authentication-plugin=mysql_native_password
 
+  redis:
+    image: redis:7.2
+    container_name: apex_sports_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+
 volumes:
   mysql_data:
+  redis_data:
