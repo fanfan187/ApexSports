@@ -1,12 +1,10 @@
 -- =============================================
 -- ApexSports 学生运动会管理系统 - 数据库架构
 -- 版本: 1.0.0
--- 创建时间: 2026-03-11
 -- =============================================
 
 -- 设置字符集
 SET NAMES utf8mb4;
-SET FOREIGN_KEY_CHECKS = 0;
 
 -- =============================================
 -- 1. 用户表 (as_user)
@@ -64,8 +62,7 @@ CREATE TABLE `as_athlete` (
     `deleted` TINYINT NOT NULL DEFAULT 0 COMMENT '逻辑删除: 0-未删除, 1-已删除',
     PRIMARY KEY (`id`),
     UNIQUE KEY `uk_student_no` (`student_no`),
-    KEY `idx_college_id` (`college_id`),
-    CONSTRAINT `fk_athlete_college` FOREIGN KEY (`college_id`) REFERENCES `as_college` (`id`)
+    KEY `idx_college_id` (`college_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='运动员表';
 
 -- =============================================
@@ -172,9 +169,7 @@ CREATE TABLE `as_competition` (
     KEY `idx_event_id` (`event_id`),
     KEY `idx_venue_id` (`venue_id`),
     KEY `idx_start_time` (`start_time`),
-    KEY `idx_status` (`status`),
-    CONSTRAINT `fk_competition_event` FOREIGN KEY (`event_id`) REFERENCES `as_event` (`id`),
-    CONSTRAINT `fk_competition_venue` FOREIGN KEY (`venue_id`) REFERENCES `as_venue` (`id`)
+    KEY `idx_status` (`status`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='比赛场次表';
 
 -- =============================================
@@ -197,10 +192,7 @@ CREATE TABLE `as_participation` (
     PRIMARY KEY (`id`),
     UNIQUE KEY `uk_athlete_event` (`athlete_id`, `event_id`),
     KEY `idx_event_id` (`event_id`),
-    KEY `idx_competition_id` (`competition_id`),
-    CONSTRAINT `fk_participation_athlete` FOREIGN KEY (`athlete_id`) REFERENCES `as_athlete` (`id`),
-    CONSTRAINT `fk_participation_event` FOREIGN KEY (`event_id`) REFERENCES `as_event` (`id`),
-    CONSTRAINT `fk_participation_competition` FOREIGN KEY (`competition_id`) REFERENCES `as_competition` (`id`)
+    KEY `idx_competition_id` (`competition_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='个人参赛记录表';
 
 -- =============================================
@@ -221,10 +213,7 @@ CREATE TABLE `as_team_participation` (
     PRIMARY KEY (`id`),
     UNIQUE KEY `uk_college_event` (`college_id`, `event_id`),
     KEY `idx_event_id` (`event_id`),
-    KEY `idx_competition_id` (`competition_id`),
-    CONSTRAINT `fk_team_participation_college` FOREIGN KEY (`college_id`) REFERENCES `as_college` (`id`),
-    CONSTRAINT `fk_team_participation_event` FOREIGN KEY (`event_id`) REFERENCES `as_event` (`id`),
-    CONSTRAINT `fk_team_participation_competition` FOREIGN KEY (`competition_id`) REFERENCES `as_competition` (`id`)
+    KEY `idx_competition_id` (`competition_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='团体参赛记录表';
 
 -- =============================================
@@ -245,9 +234,7 @@ CREATE TABLE `as_referee_assignment` (
     PRIMARY KEY (`id`),
     UNIQUE KEY `uk_competition_referee` (`competition_id`, `referee_id`),
     KEY `idx_referee_id` (`referee_id`),
-    KEY `idx_role` (`role`),
-    CONSTRAINT `fk_referee_assignment_competition` FOREIGN KEY (`competition_id`) REFERENCES `as_competition` (`id`),
-    CONSTRAINT `fk_referee_assignment_referee` FOREIGN KEY (`referee_id`) REFERENCES `as_referee` (`id`)
+    KEY `idx_role` (`role`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='裁判分配表';
 
 -- =============================================
@@ -276,12 +263,7 @@ CREATE TABLE `as_score` (
     KEY `idx_participation_id` (`participation_id`),
     KEY `idx_team_participation_id` (`team_participation_id`),
     KEY `idx_athlete_id` (`athlete_id`),
-    KEY `idx_college_id` (`college_id`),
-    CONSTRAINT `fk_score_competition` FOREIGN KEY (`competition_id`) REFERENCES `as_competition` (`id`),
-    CONSTRAINT `fk_score_participation` FOREIGN KEY (`participation_id`) REFERENCES `as_participation` (`id`),
-    CONSTRAINT `fk_score_team_participation` FOREIGN KEY (`team_participation_id`) REFERENCES `as_team_participation` (`id`),
-    CONSTRAINT `fk_score_athlete` FOREIGN KEY (`athlete_id`) REFERENCES `as_athlete` (`id`),
-    CONSTRAINT `fk_score_college` FOREIGN KEY (`college_id`) REFERENCES `as_college` (`id`)
+    KEY `idx_college_id` (`college_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='成绩表';
 
 -- =============================================
@@ -308,10 +290,7 @@ CREATE TABLE `as_record` (
     `deleted` TINYINT NOT NULL DEFAULT 0 COMMENT '逻辑删除: 0-未删除, 1-已删除',
     PRIMARY KEY (`id`),
     KEY `idx_event_id` (`event_id`),
-    KEY `idx_record_type` (`record_type`),
-    CONSTRAINT `fk_record_event` FOREIGN KEY (`event_id`) REFERENCES `as_event` (`id`),
-    CONSTRAINT `fk_record_athlete` FOREIGN KEY (`athlete_id`) REFERENCES `as_athlete` (`id`),
-    CONSTRAINT `fk_record_college` FOREIGN KEY (`college_id`) REFERENCES `as_college` (`id`)
+    KEY `idx_record_type` (`record_type`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='记录表';
 
 -- =============================================
@@ -331,9 +310,7 @@ CREATE TABLE `as_competition_equipment` (
     `deleted` TINYINT NOT NULL DEFAULT 0 COMMENT '逻辑删除: 0-未删除, 1-已删除',
     PRIMARY KEY (`id`),
     KEY `idx_competition_id` (`competition_id`),
-    KEY `idx_equipment_id` (`equipment_id`),
-    CONSTRAINT `fk_competition_equipment_competition` FOREIGN KEY (`competition_id`) REFERENCES `as_competition` (`id`),
-    CONSTRAINT `fk_competition_equipment_equipment` FOREIGN KEY (`equipment_id`) REFERENCES `as_equipment` (`id`)
+    KEY `idx_equipment_id` (`equipment_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='比赛器材使用表';
 
 -- =============================================
@@ -357,8 +334,7 @@ CREATE TABLE `as_college_score_summary` (
     `deleted` TINYINT NOT NULL DEFAULT 0 COMMENT '逻辑删除: 0-未删除, 1-已删除',
     PRIMARY KEY (`id`),
     UNIQUE KEY `uk_college_sports_meet` (`college_id`, `sports_meet_id`),
-    KEY `idx_total_points` (`total_points`),
-    CONSTRAINT `fk_college_score_summary_college` FOREIGN KEY (`college_id`) REFERENCES `as_college` (`id`)
+    KEY `idx_total_points` (`total_points`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='学院积分汇总表';
 
 -- =============================================
@@ -384,5 +360,3 @@ FROM as_college_score_summary css
 JOIN as_college c ON css.college_id = c.id
 WHERE css.deleted = 0 AND c.deleted = 0
 ORDER BY css.total_points DESC;
-
-SET FOREIGN_KEY_CHECKS = 1;

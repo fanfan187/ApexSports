@@ -70,7 +70,7 @@ spring:
 # MyBatis-Plus配置
 # =============================================
 mybatis-plus:
-  mapper-locations: classpath:mappers/*.xml
+  mapper-locations: classpath:mapper/*.xml
   type-aliases-package: com.fanfan.apexsports.entities
   configuration:
     map-underscore-to-camel-case: true
@@ -116,3 +116,11 @@ logging:
 # =============================================
 # Redisson配置
 # =============================================
+
+# =============================================
+# 自定义JWT配置
+# =============================================
+apex:
+  jwt:
+    secret: ${APEX_JWT_SECRET:ApexSports2026SecretKeyForJwtTokenGenerationMustBeLongEnoughForHS256Algorithm}
+    expiration: 7200000  # 2小时 (毫秒)

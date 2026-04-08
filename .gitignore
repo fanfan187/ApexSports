@@ -31,6 +31,10 @@ Thumbs.db
 *.swo
 *~
 
+# 项目文档
+docs/
+er_diagram.png
+
 # 环境变量
 .env
 .env.*
