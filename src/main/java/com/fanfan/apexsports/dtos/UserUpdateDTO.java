@@ -1,6 +1,8 @@
 package com.fanfan.apexsports.dtos;
 
+import lombok.AllArgsConstructor;
 import lombok.Data;
+import lombok.NoArgsConstructor;
 
 /**
  * 修改用户信息请求 DTO
@@ -13,6 +15,8 @@ import lombok.Data;
  * @since v1.0.0
  */
 @Data
+@NoArgsConstructor
+@AllArgsConstructor
 public class UserUpdateDTO {
 
     private String realName;

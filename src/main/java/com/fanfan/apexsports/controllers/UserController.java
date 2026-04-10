@@ -70,7 +70,7 @@ public class UserController {
      * @return 修改后的用户信息
      */
     @PutMapping("/{id}")
-    public Result<UserVO> update(@PathVariable Long id, @RequestBody UserUpdateDTO dto) {
+    public Result<UserVO> update(@PathVariable Long id, @RequestBody @Valid UserUpdateDTO dto) {
         return Result.success("修改成功", userService.update(id, dto));
     }
 

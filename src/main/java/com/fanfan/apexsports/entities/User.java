@@ -6,6 +6,8 @@ import com.baomidou.mybatisplus.annotation.TableLogic;
 import com.baomidou.mybatisplus.annotation.TableName;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import lombok.Data;
+import lombok.NoArgsConstructor;
+import lombok.experimental.Accessors;
 
 import java.io.Serializable;
 import java.time.LocalDateTime;
@@ -22,6 +24,8 @@ import java.time.LocalDateTime;
  */
 @Data
 @TableName("user")
+@Accessors(chain = true)
+@NoArgsConstructor
 public class User implements Serializable {
 
     /** 用户ID */

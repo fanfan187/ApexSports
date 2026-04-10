@@ -1,14 +1,11 @@
 package com.fanfan.apexsports.utils;
 
-import com.fanfan.apexsports.config.JwtProperties;
 import com.fanfan.apexsports.exception.BusinessException;
 import com.fanfan.apexsports.exception.ErrorCode;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.ExpiredJwtException;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
-import lombok.RequiredArgsConstructor;
-import org.springframework.stereotype.Component;
 
 import javax.crypto.SecretKey;
 import java.nio.charset.StandardCharsets;
@@ -18,27 +15,34 @@ import java.util.Date;
 /**
  * JWT 工具类
  * <p>
- * 提供 JWT Token 的生成、解析和 Claims 信息提取功能，支持 Token 过期检测和剩余有效期计算
+ * 提供 JWT Token 的生成、解析和 Claims 信息提取功能，支持 Token 过期检测和剩余有效期计算。
+ * 所有方法均为静态方法，通过 {@link #init(String, long)} 初始化签名密钥和过期时间
  * </p>
  *
  * @author fanfan187
  * @version v1.0.0
  * @since v1.0.0
  */
-@Component
-@RequiredArgsConstructor
-public class JwtUtil {
+public final class JwtUtil {
 
-    private final JwtProperties jwtProperties;
+    private static SecretKey signingKey;
+    private static long expiration;
+
+    private JwtUtil() {}
 
     /**
-     * 获取 HMAC 签名密钥
+     * 初始化 JWT 工具类
+     * <p>
+     * 应在应用启动时调用，设置签名密钥和 Token 有效期
+     * </p>
      *
-     * @return 签名密钥
+     * @param secret      签名密钥字符串
+     * @param expirationMs Token 有效期（毫秒）
      */
-    private SecretKey getSigningKey() {
-        byte[] keyBytes = jwtProperties.getSecret().getBytes(StandardCharsets.UTF_8);
-        return Keys.hmacShaKeyFor(keyBytes);
+    public static void init(String secret, long expirationMs) {
+        byte[] keyBytes = secret.getBytes(StandardCharsets.UTF_8);
+        JwtUtil.signingKey = Keys.hmacShaKeyFor(keyBytes);
+        JwtUtil.expiration = expirationMs;
     }
 
     /**
@@ -48,9 +52,9 @@ public class JwtUtil {
      * @param role   角色
      * @return Token 字符串
      */
-    public String generateToken(Long userId, Integer role) {
+    public static String generateToken(Long userId, Integer role) {
         Date now = new Date();
-        Date expiryDate = new Date(now.getTime() + jwtProperties.getExpiration());
+        Date expiryDate = new Date(now.getTime() + expiration);
 
         return Jwts.builder()
                 .subject(String.valueOf(userId))
@@ -58,7 +62,7 @@ public class JwtUtil {
                 .claim("role", role)
                 .issuedAt(now)
                 .expiration(expiryDate)
-                .signWith(getSigningKey())
+                .signWith(signingKey)
                 .compact();
     }
 
@@ -71,10 +75,10 @@ public class JwtUtil {
      * @param token JWT Token 字符串
      * @return Claims 声明信息
      */
-    public Claims parseToken(String token) {
+    public static Claims parseToken(String token) {
         try {
             return Jwts.parser()
-                    .verifyWith(getSigningKey())
+                    .verifyWith(signingKey)
                     .build()
                     .parseSignedClaims(token)
                     .getPayload();
@@ -91,7 +95,7 @@ public class JwtUtil {
      * @param token JWT Token 字符串
      * @return 用户ID
      */
-    public Long getUserId(String token) {
+    public static Long getUserId(String token) {
         Claims claims = parseToken(token);
         return claims.get("userId", Long.class);
     }
@@ -102,7 +106,7 @@ public class JwtUtil {
      * @param token JWT Token 字符串
      * @return 角色编码
      */
-    public Integer getRole(String token) {
+    public static Integer getRole(String token) {
         Claims claims = parseToken(token);
         return claims.get("role", Integer.class);
     }
@@ -110,13 +114,14 @@ public class JwtUtil {
     /**
      * 获取 Token 剩余有效时间
      *
+     * @param token JWT Token 字符串
      * @return 剩余时间，如果已过期返回 Duration.ZERO
      */
-    public Duration getRemainingExpiration(String token) {
+    public static Duration getRemainingExpiration(String token) {
         try {
             Claims claims = parseToken(token);
-            Date expiration = claims.getExpiration();
-            long remaining = expiration.getTime() - System.currentTimeMillis();
+            Date exp = claims.getExpiration();
+            long remaining = exp.getTime() - System.currentTimeMillis();
             return remaining > 0 ? Duration.ofMillis(remaining) : Duration.ZERO;
         } catch (BusinessException e) {
             return Duration.ZERO;

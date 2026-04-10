@@ -2,7 +2,9 @@ package com.fanfan.apexsports.dtos;
 
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
+import lombok.AllArgsConstructor;
 import lombok.Data;
+import lombok.NoArgsConstructor;
 
 /**
  * 修改密码请求 DTO
@@ -15,6 +17,8 @@ import lombok.Data;
  * @since v1.0.0
  */
 @Data
+@NoArgsConstructor
+@AllArgsConstructor
 public class PasswordChangeDTO {
 
     @NotBlank(message = "原密码不能为空")

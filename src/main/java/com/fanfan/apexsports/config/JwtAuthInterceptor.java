@@ -1,5 +1,6 @@
 package com.fanfan.apexsports.config;
 
+import com.fanfan.apexsports.cache.AuthCache;
 import com.fanfan.apexsports.constants.JwtConstants;
 import com.fanfan.apexsports.exception.BusinessException;
 import com.fanfan.apexsports.exception.ErrorCode;
@@ -9,7 +10,6 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 import org.springframework.web.servlet.HandlerInterceptor;
@@ -17,8 +17,8 @@ import org.springframework.web.servlet.HandlerInterceptor;
 /**
  * JWT 认证拦截器
  * <p>
- * 拦截请求并校验 JWT Token 的有效性，检查 Redis 黑名单，解析 Token 后将用户信息注入 {@link UserContext}，
- * 请求结束后自动清理 ThreadLocal
+ * 拦截请求并校验 JWT Token 的有效性，通过 AuthCache 检查黑名单，
+ * 解析 Token 后将用户信息注入 {@link UserContext}，请求结束后自动清理 ThreadLocal
  * </p>
  *
  * @author fanfan187
@@ -30,13 +30,12 @@ import org.springframework.web.servlet.HandlerInterceptor;
 @RequiredArgsConstructor
 public class JwtAuthInterceptor implements HandlerInterceptor {
 
-    private final JwtUtil jwtUtil;
-    private final StringRedisTemplate stringRedisTemplate;
+    private final AuthCache authCache;
 
     /**
      * 请求预处理
      * <p>
-     * OPTIONS 预检请求直接放行；提取并校验 JWT Token，检查 Redis 黑名单，
+     * OPTIONS 预检请求直接放行；提取并校验 JWT Token，通过 AuthCache 检查黑名单，
      * 解析后将用户信息注入 {@link UserContext}
      * </p>
      *
@@ -58,14 +57,13 @@ public class JwtAuthInterceptor implements HandlerInterceptor {
             throw new BusinessException(ErrorCode.UNAUTHORIZED, "缺少认证凭证");
         }
 
-        // 检查 Redis 黑名单
-        Boolean blacklisted = stringRedisTemplate.hasKey(JwtConstants.TOKEN_BLACKLIST_PREFIX + token);
-        if (Boolean.TRUE.equals(blacklisted)) {
+        // 通过 AuthCache 检查黑名单
+        if (authCache.isTokenBlacklisted(token)) {
             throw new BusinessException(ErrorCode.UNAUTHORIZED, "凭证已失效，请重新登录");
         }
 
-        // 解析 Token 并填充上下文
-        Claims claims = jwtUtil.parseToken(token);
+        // 解析 Token 并填充上下文（JwtUtil 为静态工具类）
+        Claims claims = JwtUtil.parseToken(token);
         Long userId = claims.get("userId", Long.class);
         Integer role = claims.get("role", Integer.class);
         UserContext.set(userId, role);

@@ -1,7 +1,7 @@
 package com.fanfan.apexsports.vos;
 
 import lombok.AllArgsConstructor;
-import lombok.Data;
+import lombok.Getter;
 import lombok.NoArgsConstructor;
 
 /**
@@ -14,7 +14,7 @@ import lombok.NoArgsConstructor;
  * @version v1.0.0
  * @since v1.0.0
  */
-@Data
+@Getter
 @NoArgsConstructor
 @AllArgsConstructor
 public class LoginVO {

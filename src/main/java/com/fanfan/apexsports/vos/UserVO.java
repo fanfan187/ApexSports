@@ -1,7 +1,9 @@
 package com.fanfan.apexsports.vos;
 
 import com.fanfan.apexsports.entities.User;
-import lombok.Data;
+import lombok.AllArgsConstructor;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
 
 import java.io.Serializable;
 import java.time.LocalDateTime;
@@ -9,14 +11,17 @@ import java.time.LocalDateTime;
 /**
  * 用户响应 VO（不含密码）
  * <p>
- * 返回给前端的用户视图对象，自动排除密码字段，提供从 Entity 转换的静态工厂方法
+ * 返回给前端的用户视图对象，自动排除密码字段，提供从 Entity 转换的静态工厂方法。
+ * 使用 {@code @Getter} 保证不可变性，不允许外部修改
  * </p>
  *
  * @author fanfan187
  * @version v1.0.0
  * @since v1.0.0
  */
-@Data
+@Getter
+@NoArgsConstructor
+@AllArgsConstructor
 public class UserVO implements Serializable {
 
     private Long id;
@@ -39,16 +44,16 @@ public class UserVO implements Serializable {
         if (user == null) {
             return null;
         }
-        UserVO vo = new UserVO();
-        vo.setId(user.getId());
-        vo.setUsername(user.getUsername());
-        vo.setRealName(user.getRealName());
-        vo.setRole(user.getRole());
-        vo.setPhone(user.getPhone());
-        vo.setEmail(user.getEmail());
-        vo.setStatus(user.getStatus());
-        vo.setCreatedAt(user.getCreatedAt());
-        vo.setUpdatedAt(user.getUpdatedAt());
-        return vo;
+        return new UserVO(
+                user.getId(),
+                user.getUsername(),
+                user.getRealName(),
+                user.getRole(),
+                user.getPhone(),
+                user.getEmail(),
+                user.getStatus(),
+                user.getCreatedAt(),
+                user.getUpdatedAt()
+        );
     }
 }
