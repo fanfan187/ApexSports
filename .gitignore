@@ -1,9 +1,16 @@
-# IDE 配置
+# IDE / 编辑器
 .idea/
 *.iml
 *.ipr
 *.iws
 .vscode/
+.settings/
+.classpath
+.project
+.factorypath
+*.swp
+*.swo
+*~
 
 # Claude Code 配置
 .claude/
@@ -13,10 +20,9 @@ target/
 *.jar
 *.war
 *.ear
-*.fla
 *.zip
 
-# 编译输出
+# 编译产物
 *.class
 *.log
 *.ctxt
@@ -24,22 +30,29 @@ target/
 hs_err_pid*
 replay_pid*
 
-# 系统文件
-.DS_Store
-Thumbs.db
-*.swp
-*.swo
-*~
+# Node.js / Apifox CLI
+node_modules/
+package.json
+package-lock.json
+apifox-reports/
 
-# 项目文档
-docs/
-er_diagram.png
-
-# 环境变量
+# 环境变量 / 敏感配置
 .env
 .env.*
+!.env.example
 
-# 临时文件
+# 操作系统文件
+.DS_Store
+Thumbs.db
+Desktop.ini
+ehthumbs.db
+
+# 临时 / 备份文件
 *.tmp
 *.temp
 *.bak
+*.cache
+
+# 项目文档（按需管理）
+docs/
+er_diagram.png
