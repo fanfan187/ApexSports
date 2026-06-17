@@ -28,6 +28,7 @@ public enum ErrorCode {
 
     // 404xx - 资源不存在
     USER_NOT_FOUND(40401, "用户不存在"),
+    COLLEGE_NOT_FOUND(40402, "学院不存在"),
 
     // 409xx - 冲突相关
     USERNAME_EXISTS(40901, "用户名已存在"),
@@ -37,6 +38,8 @@ public enum ErrorCode {
     // 409xx - 状态冲突
     ACCOUNT_DISABLED(40902, "账号已被禁用"),
     CANNOT_MODIFY_SELF(40902, "不能操作自己的账号"),
+    COLLEGE_CODE_EXISTS(40903, "学院代码已存在"),
+    COLLEGE_IN_USE(40904, "该学院下存在关联数据，不可删除"),
 
     // 500xx - 系统错误
     INTERNAL_ERROR(50000, "系统内部错误");
