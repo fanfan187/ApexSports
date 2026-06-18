@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.fanfan.apexsports.mappers.VenueMapper">
+
+    <!--
+        场地赛程查询结果集映射
+        VenueScheduleVO 字段：id, eventName, startTime, endTime, status
+        注意：依赖 Task 2 创建的 VenueScheduleVO，字段需与之匹配
+    -->
+    <resultMap id="VenueScheduleMap" type="com.fanfan.apexsports.vos.VenueScheduleVO">
+        <id     property="id"        column="id"/>
+        <result property="eventName" column="event_name"/>
+        <result property="startTime" column="start_time"/>
+        <result property="endTime"   column="end_time"/>
+        <result property="status"    column="status"/>
+    </resultMap>
+
+    <!--
+        查询场地赛程（跨表 join: as_competition c LEFT JOIN as_event e）
+        - 按 venue_id 过滤 c，同时排除双方已逻辑删除记录
+        - 可选 date 过滤：将 LocalDate 转为当日 [date 00:00:00, date+1day 00:00:00) 区间过滤 c.start_time
+        - 按 c.start_time ASC 升序
+    -->
+    <select id="selectVenueSchedule" resultMap="VenueScheduleMap">
+        SELECT c.id,
+               e.name       AS event_name,
+               c.start_time,
+               c.end_time,
+               c.status
+        FROM as_competition c
+        LEFT JOIN as_event e ON c.event_id = e.id
+        WHERE c.venue_id = #{venueId}
+          AND c.deleted = 0
+          AND e.deleted = 0
+        <if test="date != null">
+            AND c.start_time &gt;= #{date}
+            AND c.start_time &lt; DATE_ADD(#{date}, INTERVAL 1 DAY)
+        </if>
+        ORDER BY c.start_time ASC
+    </select>
+
+</mapper>
