@@ -32,6 +32,8 @@ public enum ErrorCode {
     ATHLETE_NOT_FOUND(40403, "运动员不存在"),
     EVENT_NOT_FOUND(40404, "项目不存在"),
     VENUE_NOT_FOUND(40406, "场地不存在"),
+    EQUIPMENT_NOT_FOUND(40407, "器材不存在"),
+    REFEREE_NOT_FOUND(40408, "裁判不存在"),
 
     // 409xx - 冲突相关
     USERNAME_EXISTS(40901, "用户名已存在"),
@@ -46,8 +48,12 @@ public enum ErrorCode {
     STUDENT_NO_EXISTS(40905, "学号已存在"),
     EVENT_CODE_EXISTS(40906, "项目代码已存在"),
     EVENT_IN_USE(40907, "该项目存在关联报名记录或赛程安排，不可删除"),
+    REFEREE_IN_USE(40908, "该裁判存在未完成的裁判分配，不可删除"),
     VENUE_CODE_EXISTS(40911, "场地代码已存在"),
     VENUE_IN_USE(40912, "该场地下存在关联赛程，不可删除"),
+    EQUIPMENT_CODE_EXISTS(40913, "器材代码已存在"),
+    EQUIPMENT_IN_USE(40914, "该器材存在未归还记录，不可删除"),
+    EQUIPMENT_QUANTITY_INVALID(40915, "可用库存不足"),
 
     // 500xx - 系统错误
     INTERNAL_ERROR(50000, "系统内部错误");
