@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.fanfan.apexsports.mappers.RefereeMapper">
+
+    <!--
+        裁判赛程查询结果集映射
+        RefereeScheduleVO 字段：
+            competitionId / eventName / scheduleTime / startTime /
+            endTime / venueName / role / competitionStatus
+        注意：
+            1. column 使用 SQL 中 AS 别名（下划线），property 对应 VO 字段（驼峰）
+            2. 依赖 Task 2 创建的 RefereeScheduleVO，字段必须与之完全一致
+            3. schedule_time 与 start_time 均取自 c.start_time（兼容前端两种字段名）
+    -->
+    <resultMap id="RefereeScheduleMap" type="com.fanfan.apexsports.vos.RefereeScheduleVO">
+        <result column="competition_id"      property="competitionId"/>
+        <result column="event_name"          property="eventName"/>
+        <result column="schedule_time"       property="scheduleTime"/>
+        <result column="start_time"          property="startTime"/>
+        <result column="end_time"            property="endTime"/>
+        <result column="venue_name"          property="venueName"/>
+        <result column="role"                property="role"/>
+        <result column="competition_status"  property="competitionStatus"/>
+    </resultMap>
+
+    <!--
+        查询裁判赛程（4 表 join）
+        路径：as_referee_assignment a
+                JOIN  as_competition c ON a.competition_id = c.id   （INNER：必须有比赛）
+                LEFT JOIN as_event    e ON c.event_id    = e.id     （LEFT：比赛可能无项目）
+                LEFT JOIN as_venue    v ON c.venue_id    = v.id     （LEFT：比赛可能无场地）
+        ⚠️ 原生 XML 中 @TableLogic 不生效，4 张表必须各自显式 deleted = 0
+        排序：c.start_time ASC
+        role：直接返回 TINYINT，前端 StatusTag 映射，后端不做 CASE WHEN
+    -->
+    <select id="selectRefereeSchedule" resultMap="RefereeScheduleMap">
+        SELECT c.id          AS competition_id,
+               e.name        AS event_name,
+               c.start_time  AS schedule_time,
+               c.start_time  AS start_time,
+               c.end_time    AS end_time,
+               v.name        AS venue_name,
+               a.role        AS role,
+               c.status      AS competition_status
+        FROM as_referee_assignment a
+        JOIN  as_competition c ON a.competition_id = c.id
+        LEFT JOIN as_event    e ON c.event_id = e.id
+        LEFT JOIN as_venue    v ON c.venue_id = v.id
+        WHERE a.referee_id = #{refereeId}
+          AND a.deleted = 0
+          AND a.status = 1
+          AND c.deleted = 0
+          AND e.deleted = 0
+          AND v.deleted = 0
+        ORDER BY c.start_time ASC
+    </select>
+
+    <!--
+        删除前校验：统计裁判"活跃且比赛未结束"的分配数
+        路径：as_referee_assignment a JOIN as_competition c
+        过滤：
+          - a.referee_id = #{refereeId}
+          - a.deleted = 0 AND a.status = 1（分配未取消）
+          - c.deleted = 0
+          - c.status IN (0, 1)（0-未开始 / 1-进行中；已结束2、已取消3不计入）
+        返回 Long：> 0 时禁止删除该裁判
+    -->
+    <select id="countActiveAssignmentsByRefereeId" resultType="java.lang.Long">
+        SELECT COUNT(*)
+        FROM as_referee_assignment a
+        JOIN as_competition c ON a.competition_id = c.id
+        WHERE a.referee_id = #{refereeId}
+          AND a.deleted = 0
+          AND a.status = 1
+          AND c.deleted = 0
+          AND c.status IN (0, 1)
+    </select>
+
+</mapper>
