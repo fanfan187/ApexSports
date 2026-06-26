@@ -11,7 +11,6 @@ import com.fanfan.apexsports.dtos.RefereeUpdateDTO;
 import com.fanfan.apexsports.entities.Referee;
 import com.fanfan.apexsports.exception.BusinessException;
 import com.fanfan.apexsports.exception.ErrorCode;
-import com.fanfan.apexsports.mappers.RefereeMapper;
 import com.fanfan.apexsports.services.RefereeService;
 import com.fanfan.apexsports.vos.RefereeScheduleVO;
 import com.fanfan.apexsports.vos.RefereeVO;
@@ -42,7 +41,6 @@ import java.util.stream.Collectors;
 public class RefereeLogic implements RefereeService {
 
     private final RefereeDAO refereeDAO;
-    private final RefereeMapper refereeMapper;
 
     /**
      * 分页查询裁判列表
@@ -180,7 +178,7 @@ public class RefereeLogic implements RefereeService {
     /**
      * 查询裁判赛程列表
      * <p>
-     * 所有角色均可查询。委派 Mapper 的自定义 join 查询方法，返回结果已是 VO，无需转换
+     * 所有角色均可查询。通过 DAO 委派 Mapper 的 4 表 join 查询，返回结果已是 VO，无需转换
      * </p>
      *
      * @param id 裁判ID
@@ -189,7 +187,7 @@ public class RefereeLogic implements RefereeService {
     @Override
     public List<RefereeScheduleVO> getSchedule(Long id) {
         getRefereeOrThrow(id);
-        return refereeMapper.selectRefereeSchedule(id);
+        return refereeDAO.getSchedule(id);
     }
 
     // ==================== 私有辅助方法 ====================

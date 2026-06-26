@@ -4,12 +4,14 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.fanfan.apexsports.entities.Referee;
 import com.fanfan.apexsports.mappers.RefereeMapper;
+import com.fanfan.apexsports.vos.RefereeScheduleVO;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 /**
  * 裁判数据调度层
@@ -79,6 +81,20 @@ public class RefereeDAO {
      */
     public Long countActiveAssignments(Long refereeId) {
         return refereeMapper.countActiveAssignmentsByRefereeId(refereeId);
+    }
+
+    /**
+     * 查询裁判赛程列表（4 表 join）
+     * <p>
+     * 委派给 {@link RefereeMapper#selectRefereeSchedule(Long)} 的跨表 join SQL，
+     * 返回已是 VO，无需 DAO 层转换。Logic 层应调用本方法，不直接调用 Mapper。
+     * </p>
+     *
+     * @param refereeId 裁判ID（必填）
+     * @return 赛程 VO 列表（按比赛开始时间升序）
+     */
+    public List<RefereeScheduleVO> getSchedule(Long refereeId) {
+        return refereeMapper.selectRefereeSchedule(refereeId);
     }
 
     // ==================== 写入操作 ====================
