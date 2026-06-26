@@ -1,6 +1,7 @@
 package com.fanfan.apexsports.daos;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.fanfan.apexsports.cache.EventCache;
 import com.fanfan.apexsports.constants.EventConstants;
 import com.fanfan.apexsports.entities.Event;
 import com.fanfan.apexsports.entities.Record;
@@ -32,6 +33,11 @@ import java.util.List;
  * 三张引用表（as_participation / as_team_participation / as_competition）当前尚无对应 Entity/Mapper，
  * 引用完整性检查同样使用 JdbcTemplate 原生 SQL（带 deleted = 0 过滤）。
  * </p>
+ * <p>
+ * <b>缓存策略：</b>读操作采用 cache-aside 模式（先查缓存→未命中查库→回写缓存），
+ * 写操作（增/改/删）驱逐相关缓存保证一致性。协调 {@link EventCache} 与 {@link EventMapper}。
+ * 唯一性校验和引用检查方法不经过缓存，始终直查数据库以保证实时性。
+ * </p>
  *
  * @author fanfan187
  * @version v1.0.0
@@ -45,6 +51,7 @@ public class EventDAO {
     private final EventMapper eventMapper;
     private final RecordMapper recordMapper;
     private final JdbcTemplate jdbcTemplate;
+    private final EventCache eventCache;
 
     // ==================== 查询操作 ====================
 
@@ -62,6 +69,13 @@ public class EventDAO {
      * @return 符合条件的比赛项目列表
      */
     public List<Event> findAll(Integer type, Integer category, Integer gender, Integer status) {
+        String filterKey = buildFilterKey(type, category, gender, status);
+        // 1. 先查列表缓存
+        List<Event> cached = eventCache.getEventList(filterKey);
+        if (cached != null) {
+            return cached;
+        }
+        // 2. 缓存未命中，查数据库（以下逻辑完全不变）
         LambdaQueryWrapper<Event> wrapper = new LambdaQueryWrapper<>();
         if (type != null) {
             wrapper.eq(Event::getType, type);
@@ -76,7 +90,27 @@ public class EventDAO {
             wrapper.eq(Event::getStatus, status);
         }
         wrapper.orderByAsc(Event::getId);
-        return eventMapper.selectList(wrapper);
+        List<Event> events = eventMapper.selectList(wrapper);
+        // 3. 回写缓存
+        eventCache.cacheEventList(filterKey, events);
+        return events;
+    }
+
+    /**
+     * 根据过滤参数生成列表缓存的 filterKey 签名。
+     * <p>
+     * 该 Key 仅作为 Cache 层的不透明字符串后缀，Cache 不关心其语义。
+     * 不同过滤组合生成不同 Key，保证各类列表查询独立缓存、互不干扰。
+     * </p>
+     *
+     * @param type     项目类型，可为 null
+     * @param category 项目类别，可为 null
+     * @param gender   性别限制，可为 null
+     * @param status   状态，可为 null
+     * @return 过滤签名，例如 {@code "tnull_cnull_gnull_snull"}（全量）或 {@code "t1_c2_g1_snull"}
+     */
+    private String buildFilterKey(Integer type, Integer category, Integer gender, Integer status) {
+        return "t" + type + "_c" + category + "_g" + gender + "_s" + status;
     }
 
     /**
@@ -86,7 +120,18 @@ public class EventDAO {
      * @return 项目实体，不存在返回 null
      */
     public Event getById(Long id) {
-        return eventMapper.selectById(id);
+        // 1. 先查缓存
+        Event cached = eventCache.getEventById(id);
+        if (cached != null) {
+            return cached;
+        }
+        // 2. 缓存未命中，查数据库
+        Event event = eventMapper.selectById(id);
+        // 3. 命中 DB 则回写缓存（注意：event 可能为 null，null 不缓存）
+        if (event != null) {
+            eventCache.cacheEvent(event);
+        }
+        return event;
     }
 
     /**
@@ -222,7 +267,11 @@ public class EventDAO {
         }
         eventMapper.insert(event);
         // 从数据库重新提取，确保字段完整
-        return eventMapper.selectById(event.getId());
+        Event inserted = eventMapper.selectById(event.getId());
+        // 写操作：驱逐该实体的单条缓存（新数据需回写）+ 所有列表缓存（列表结果可能变化）
+        eventCache.cacheEvent(inserted);   // 主动缓存新插入的实体
+        eventCache.evictAllEventLists();   // 驱逐所有列表（新增项目会影响列表结果）
+        return inserted;
     }
 
     /**
@@ -234,7 +283,13 @@ public class EventDAO {
     public Event update(Event event) {
         event.setUpdatedAt(LocalDateTime.now());
         eventMapper.updateById(event);
-        return eventMapper.selectById(event.getId());
+        Event updated = eventMapper.selectById(event.getId());
+        // 写操作：驱逐单条缓存（数据已变，下次读会回源）+ 所有列表缓存（过滤结果可能变化）
+        // 注意：选择驱逐而非更新单条缓存——updateById 只改部分字段，
+        //       重新查的 entity 可能与缓存里的字段不同，驱逐让下次读回源更安全。
+        eventCache.evictEvent(event.getId());
+        eventCache.evictAllEventLists();
+        return updated;
     }
 
     /**
@@ -244,5 +299,8 @@ public class EventDAO {
      */
     public void deleteById(Long id) {
         eventMapper.deleteById(id);
+        // 写操作：驱逐单条缓存 + 所有列表缓存
+        eventCache.evictEvent(id);
+        eventCache.evictAllEventLists();
     }
 }
