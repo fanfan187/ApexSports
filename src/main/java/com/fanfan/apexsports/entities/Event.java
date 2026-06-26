@@ -23,7 +23,7 @@ import java.time.LocalDateTime;
  * @since v1.0.0
  */
 @Data
-@TableName("event")
+@TableName("as_event")
 @Accessors(chain = true)
 @NoArgsConstructor
 public class Event implements Serializable {
