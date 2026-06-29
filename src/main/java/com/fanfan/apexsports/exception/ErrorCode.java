@@ -34,6 +34,8 @@ public enum ErrorCode {
     VENUE_NOT_FOUND(40406, "场地不存在"),
     EQUIPMENT_NOT_FOUND(40407, "器材不存在"),
     REFEREE_NOT_FOUND(40408, "裁判不存在"),
+    PARTICIPATION_NOT_FOUND(40411, "参赛记录不存在"),
+    TEAM_PARTICIPATION_NOT_FOUND(40412, "团体参赛记录不存在"),
 
     // 409xx - 冲突相关
     USERNAME_EXISTS(40901, "用户名已存在"),
@@ -54,6 +56,23 @@ public enum ErrorCode {
     EQUIPMENT_CODE_EXISTS(40913, "器材代码已存在"),
     EQUIPMENT_IN_USE(40914, "该器材存在未归还记录，不可删除"),
     EQUIPMENT_QUANTITY_INVALID(40915, "可用库存不足"),
+
+    // 409xx - 报名模块冲突
+    ATHLETE_NOT_REGISTERED(40921, "该运动员尚未被编排到场次"),
+    TEAM_NOT_SCHEDULED(40922, "该团体尚未被编排到场次"),
+    ATHLETE_EVENT_LIMIT_EXCEEDED(40923, "运动员已报满个人项目上限"),
+    ATHLETE_EVENT_DUPLICATE(40924, "运动员已报名该项目"),
+    EVENT_NOT_INDIVIDUAL(40925, "该项目不是个人项目"),
+    EVENT_NOT_TEAM(40926, "该项目不是集体项目"),
+    ATHLETE_BANNED(40927, "运动员已被禁赛"),
+    EVENT_DISABLED(40928, "项目已停用"),
+    PARTICIPATION_ALREADY_SCHEDULED(40929, "该报名已被编排到场次，请先移除编排"),
+    COMPETITION_NOT_CHECKABLE(40930, "关联比赛未在可检录状态"),
+    PARTICIPATION_ALREADY_CHECKED(40931, "该运动员已检录或已参赛"),
+    TEAM_PARTICIPATION_ALREADY_CHECKED(40932, "该团体已检录或已参赛"),
+    PARTICIPANT_COUNT_EXCEEDED(40933, "参赛人数超过项目上限"),
+    COLLEGE_EVENT_DUPLICATE(40934, "该学院已报名该项目"),
+    COMPETITION_STARTED(40935, "关联比赛已开始或已结束，不可取消"),
 
     // 500xx - 系统错误
     INTERNAL_ERROR(50000, "系统内部错误");

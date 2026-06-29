@@ -23,7 +23,7 @@ import java.time.LocalDateTime;
  * @since v1.0.0
  */
 @Data
-@TableName("user")
+@TableName("as_user")
 @Accessors(chain = true)
 @NoArgsConstructor
 public class User implements Serializable {

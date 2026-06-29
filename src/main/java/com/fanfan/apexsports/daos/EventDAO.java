@@ -13,6 +13,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.List;
 
 /**
@@ -132,6 +133,19 @@ public class EventDAO {
             eventCache.cacheEvent(event);
         }
         return event;
+    }
+
+    /**
+     * 根据 ID 集合批量查询比赛项目
+     *
+     * @param ids 项目ID集合
+     * @return 项目列表，集合为空时返回空列表
+     */
+    public List<Event> findByIds(Collection<Long> ids) {
+        if (ids == null || ids.isEmpty()) {
+            return List.of();
+        }
+        return eventMapper.selectBatchIds(ids);
     }
 
     /**

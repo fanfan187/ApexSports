@@ -10,6 +10,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.List;
 
 /**
@@ -63,6 +64,19 @@ public class AthleteDAO {
      */
     public Athlete getById(Long id) {
         return athleteMapper.selectById(id);
+    }
+
+    /**
+     * 根据 ID 集合批量查询运动员
+     *
+     * @param ids 运动员ID集合
+     * @return 运动员列表，集合为空时返回空列表
+     */
+    public List<Athlete> findByIds(Collection<Long> ids) {
+        if (ids == null || ids.isEmpty()) {
+            return List.of();
+        }
+        return athleteMapper.selectBatchIds(ids);
     }
 
     /**

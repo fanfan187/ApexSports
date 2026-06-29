@@ -190,7 +190,8 @@ CREATE TABLE `as_participation` (
     `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     `deleted` TINYINT NOT NULL DEFAULT 0 COMMENT '逻辑删除: 0-未删除, 1-已删除',
     PRIMARY KEY (`id`),
-    UNIQUE KEY `uk_athlete_event` (`athlete_id`, `event_id`),
+    -- 软删除后允许重报，故 uk 含 deleted 列
+    UNIQUE KEY `uk_athlete_event` (`athlete_id`, `event_id`, `deleted`),
     KEY `idx_event_id` (`event_id`),
     KEY `idx_competition_id` (`competition_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='个人参赛记录表';
@@ -211,7 +212,8 @@ CREATE TABLE `as_team_participation` (
     `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     `deleted` TINYINT NOT NULL DEFAULT 0 COMMENT '逻辑删除: 0-未删除, 1-已删除',
     PRIMARY KEY (`id`),
-    UNIQUE KEY `uk_college_event` (`college_id`, `event_id`),
+    -- 软删除后允许重报，故 uk 含 deleted 列
+    UNIQUE KEY `uk_college_event` (`college_id`, `event_id`, `deleted`),
     KEY `idx_event_id` (`event_id`),
     KEY `idx_competition_id` (`competition_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='团体参赛记录表';

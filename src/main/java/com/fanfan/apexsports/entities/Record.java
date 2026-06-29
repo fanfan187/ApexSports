@@ -25,7 +25,7 @@ import java.time.LocalDateTime;
  * @since v1.0.0
  */
 @Data
-@TableName("record")
+@TableName("as_record")
 @Accessors(chain = true)
 @NoArgsConstructor
 public class Record implements Serializable {

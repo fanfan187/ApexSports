@@ -22,7 +22,7 @@ import java.time.LocalDateTime;
  * @since v1.0.0
  */
 @Data
-@TableName("college")
+@TableName("as_college")
 @Accessors(chain = true)
 @NoArgsConstructor
 public class College implements Serializable {
