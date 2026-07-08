@@ -56,6 +56,7 @@ public enum ErrorCode {
     EQUIPMENT_CODE_EXISTS(40913, "器材代码已存在"),
     EQUIPMENT_IN_USE(40914, "该器材存在未归还记录，不可删除"),
     EQUIPMENT_QUANTITY_INVALID(40915, "可用库存不足"),
+    EQUIPMENT_DISABLED(40916, "器材已停用"),
 
     // 409xx - 报名模块冲突
     ATHLETE_NOT_REGISTERED(40921, "该运动员尚未被编排到场次"),
@@ -73,6 +74,30 @@ public enum ErrorCode {
     PARTICIPANT_COUNT_EXCEEDED(40933, "参赛人数超过项目上限"),
     COLLEGE_EVENT_DUPLICATE(40934, "该学院已报名该项目"),
     COMPETITION_STARTED(40935, "关联比赛已开始或已结束，不可取消"),
+
+    // 404xx - 赛程模块资源不存在
+    COMPETITION_NOT_FOUND(40413, "比赛场次不存在"),
+    REFEREE_ASSIGNMENT_NOT_FOUND(40414, "裁判分配不存在"),
+    COMPETITION_EQUIPMENT_NOT_FOUND(40415, "器材使用记录不存在"),
+
+    // 409xx - 赛程模块冲突
+    TRACK_TIME_CONFLICT(40941, "径赛时间冲突：该时间段内已有径赛进行"),
+    VENUE_TIME_CONFLICT(40942, "场地时间冲突：该场地该时间段已被占用"),
+    REFEREE_TIME_CONFLICT(40943, "裁判时间冲突：该裁判在该时间段已有其他场次"),
+    REFEREE_ASSIGNMENT_DUPLICATE(40944, "该裁判已分配到此场次"),
+    CHIEF_REFEREE_EXISTS(40945, "主裁判已存在：该场次已有主裁判"),
+    ATHLETE_TIME_CONFLICT(40946, "运动员时间冲突：该运动员在该时间段已有其他场次"),
+    COLLEGE_TIME_CONFLICT(40947, "学院集体项目时间冲突：该学院在该时间段已有其他集体项目比赛"),
+    PARTICIPATION_EVENT_MISMATCH(40948, "参赛记录不属于该项目的运动员"),
+    PARTICIPATION_ALREADY_ARRANGED(40949, "参赛记录已被编排到其他场次"),
+    TEAM_ALREADY_ARRANGED(40950, "团体参赛记录已被编排到其他场次"),
+    COMPETITION_FINISHED(40951, "比赛已结束或已取消，不可操作"),
+    COMPETITION_IN_PROGRESS(40952, "比赛进行中，不可删除"),
+    EQUIPMENT_RETURNED(40953, "器材已归还，不可重复操作"),
+    REFEREE_UNAVAILABLE(40954, "裁判状态不可用"),
+    INVALID_STATUS_TRANSITION(40955, "非法状态流转"),
+    PARTICIPATION_NOT_IN_COMPETITION(40956, "该参赛记录未编排到此场次"),
+    TEAM_NOT_IN_COMPETITION(40957, "该团体未编排到此场次"),
 
     // 500xx - 系统错误
     INTERNAL_ERROR(50000, "系统内部错误");
