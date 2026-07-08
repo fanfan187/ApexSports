@@ -192,4 +192,42 @@ public class EquipmentDAO {
     public void deleteById(Long id) {
         equipmentMapper.deleteById(id);
     }
+
+    /**
+     * 扣减器材可用库存（赛程模块分配器材时调用，条件 SQL 防超卖）。
+     * <p>
+     * 原子更新 {@code available_quantity = available_quantity - ?}，仅在扣减后非负时成功。
+     * 供赛程模块 {@code CompetitionEquipmentLogic} 跨模块调用，确保分配记录插入与库存扣减在同一事务内原子完成。
+     * </p>
+     *
+     * @param id       器材ID
+     * @param quantity 扣减数量（必须 > 0）
+     * @return true=扣减成功，false=库存不足
+     */
+    public boolean deductAvailable(Long id, int quantity) {
+        int rows = jdbcTemplate.update(
+                "UPDATE as_equipment SET available_quantity = available_quantity - ?, updated_at = NOW() " +
+                        "WHERE id = ? AND deleted = 0 AND available_quantity - ? >= 0",
+                quantity, id, quantity
+        );
+        return rows > 0;
+    }
+
+    /**
+     * 恢复器材可用库存（赛程模块归还器材时调用）。
+     * <p>
+     * 原子更新 {@code available_quantity = available_quantity + ?}。供赛程模块
+     * {@code CompetitionEquipmentLogic} 跨模块调用，确保状态更新与库存恢复在同一事务内原子完成。
+     * </p>
+     *
+     * @param id       器材ID
+     * @param quantity 恢复数量（必须 > 0）
+     */
+    public void restoreAvailable(Long id, int quantity) {
+        jdbcTemplate.update(
+                "UPDATE as_equipment SET available_quantity = available_quantity + ?, updated_at = NOW() " +
+                        "WHERE id = ? AND deleted = 0",
+                quantity, id
+        );
+    }
 }

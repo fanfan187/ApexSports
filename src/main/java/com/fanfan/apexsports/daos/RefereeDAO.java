@@ -11,6 +11,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.List;
 
 /**
@@ -65,6 +66,19 @@ public class RefereeDAO {
      */
     public Referee getById(Long id) {
         return refereeMapper.selectById(id);
+    }
+
+    /**
+     * 根据 ID 集合批量查询裁判（用于裁判分配列表批量填充姓名，避免 N+1 查询）
+     *
+     * @param ids 裁判ID集合
+     * @return 裁判列表，集合为空时返回空列表
+     */
+    public List<Referee> findByIds(Collection<Long> ids) {
+        if (ids == null || ids.isEmpty()) {
+            return List.of();
+        }
+        return refereeMapper.selectBatchIds(ids);
     }
 
     /**

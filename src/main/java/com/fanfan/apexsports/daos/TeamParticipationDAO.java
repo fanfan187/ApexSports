@@ -1,6 +1,7 @@
 package com.fanfan.apexsports.daos;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.fanfan.apexsports.entities.Competition;
 import com.fanfan.apexsports.entities.TeamParticipation;
@@ -126,6 +127,23 @@ public class TeamParticipationDAO {
      */
     public void deleteById(Long id) {
         teamParticipationMapper.deleteById(id);
+    }
+
+    /**
+     * 清空团体参赛记录的场次编排信息（competitionId 置 null）
+     * <p>
+     * 使用 {@link LambdaUpdateWrapper#set} 显式置 null，绕开 MyBatis-Plus
+     * {@code updateById} 默认 {@code FieldStrategy.NOT_NULL} 策略对 null 字段的跳过问题。
+     * </p>
+     *
+     * @param teamParticipationId 团体参赛记录ID
+     */
+    public void clearCompetitionArrangement(Long teamParticipationId) {
+        LambdaUpdateWrapper<TeamParticipation> wrapper = new LambdaUpdateWrapper<>();
+        wrapper.eq(TeamParticipation::getId, teamParticipationId)
+                .set(TeamParticipation::getCompetitionId, null)
+                .set(TeamParticipation::getUpdatedAt, LocalDateTime.now());
+        teamParticipationMapper.update(null, wrapper);
     }
 
     // ==================== 代理查询（供 Logic 层使用） ====================
