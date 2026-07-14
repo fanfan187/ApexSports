@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.fanfan.apexsports.mappers.CompetitionMapper">
+
+    <!--
+        单场次团体参赛人数：SUM(participant_count)
+        路径：as_team_participation
+        等价原 JdbcTemplate SQL（CompetitionDAO#countParticipantsByCompetitionId 团体部分，L189-192）：
+            SELECT COALESCE(SUM(participant_count), 0)
+            FROM as_team_participation
+            WHERE competition_id = ? AND deleted = 0
+        说明：
+            1. COALESCE(..., 0) 保证无记录时返回 0 而非 null
+            2. 原生 XML 中 @TableLogic 不生效，deleted = 0 必须显式写出
+            3. 个人参赛数（COUNT）由 BaseMapper selectCount 处理，无需 XML
+    -->
+    <select id="countTeamParticipantSum" resultType="java.lang.Long">
+        SELECT COALESCE(SUM(participant_count), 0)
+        FROM as_team_participation
+        WHERE competition_id = #{competitionId}
+          AND deleted = 0
+    </select>
+
+    <!--
+        批量个人参赛数：GROUP BY COUNT
+        路径：as_participation
+        等价原 JdbcTemplate SQL（CompetitionDAO#batchQueryParticipantCounts 个人部分，L614-618）：
+            SELECT competition_id AS competition_id, COUNT(*) AS cnt
+            FROM as_participation
+            WHERE deleted = 0
+              AND competition_id IN (?,?,...)
+            GROUP BY competition_id
+        返回：List<Map>，每个 Map 的 key 为 {competition_id, cnt}
+        说明：
+            1. IN 子句必须用 <foreach>，禁止字符串拼接（SQL 注入防护 + MyBatis 参数绑定）
+            2. 仅查询在 ids 中存在记录的场次，无记录的场次由 Logic 层补 0
+            3. 原生 XML 中 @TableLogic 不生效，deleted = 0 必须显式写出
+    -->
+    <select id="batchCountIndividualParticipants" resultType="java.util.Map">
+        SELECT competition_id, COUNT(*) AS cnt
+        FROM as_participation
+        WHERE deleted = 0
+          AND competition_id IN
+        <foreach collection="ids" item="id" open="(" separator="," close=")">
+            #{id}
+        </foreach>
+        GROUP BY competition_id
+    </select>
+
+    <!--
+        批量团体参赛数：GROUP BY SUM(participant_count)
+        路径：as_team_participation
+        等价原 JdbcTemplate SQL（CompetitionDAO#batchQueryParticipantCounts 团体部分，L624-628）：
+            SELECT competition_id AS competition_id, COALESCE(SUM(participant_count), 0) AS cnt
+            FROM as_team_participation
+            WHERE deleted = 0
+              AND competition_id IN (?,?,...)
+            GROUP BY competition_id
+        返回：List<Map>，每个 Map 的 key 为 {competition_id, cnt}
+        说明：
+            1. COALESCE(..., 0) 仅作为分组内无参与时的兜底；整组无记录时该场次不会出现在结果中
+            2. IN 子句必须用 <foreach>，禁止字符串拼接
+            3. 原生 XML 中 @TableLogic 不生效，deleted = 0 必须显式写出
+    -->
+    <select id="batchSumTeamParticipants" resultType="java.util.Map">
+        SELECT competition_id, COALESCE(SUM(participant_count), 0) AS cnt
+        FROM as_team_participation
+        WHERE deleted = 0
+          AND competition_id IN
+        <foreach collection="ids" item="id" open="(" separator="," close=")">
+            #{id}
+        </foreach>
+        GROUP BY competition_id
+    </select>
+
+</mapper>

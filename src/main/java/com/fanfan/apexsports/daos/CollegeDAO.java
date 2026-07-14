@@ -1,11 +1,14 @@
 package com.fanfan.apexsports.daos;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.fanfan.apexsports.entities.Athlete;
 import com.fanfan.apexsports.entities.College;
+import com.fanfan.apexsports.entities.TeamParticipation;
+import com.fanfan.apexsports.mappers.AthleteMapper;
 import com.fanfan.apexsports.mappers.CollegeMapper;
+import com.fanfan.apexsports.mappers.TeamParticipationMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
@@ -16,7 +19,7 @@ import java.util.List;
  * <p>
  * 协调 CollegeMapper，负责学院数据的存储、查询和调度。
  * 作为普通 Spring Bean，不继承 ServiceImpl，内部自动填充创建时间、更新时间等字段。
- * 由于 Athlete 和 TeamParticipation 实体尚未创建，引用完整性检查使用 JdbcTemplate 直接查询。
+ * 引用完整性检查通过 AthleteMapper / TeamParticipationMapper 进行计数查询。
  * </p>
  *
  * @author fanfan187
@@ -29,7 +32,8 @@ import java.util.List;
 public class CollegeDAO {
 
     private final CollegeMapper collegeMapper;
-    private final JdbcTemplate jdbcTemplate;
+    private final AthleteMapper athleteMapper;
+    private final TeamParticipationMapper teamParticipationMapper;
 
     // ==================== 查询操作 ====================
 
@@ -90,10 +94,8 @@ public class CollegeDAO {
      * @return 关联运动员数量
      */
     public Long countAthletesByCollegeId(Long collegeId) {
-        return jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM as_athlete WHERE college_id = ? AND deleted = 0",
-                Long.class,
-                collegeId
+        return athleteMapper.selectCount(
+                new LambdaQueryWrapper<Athlete>().eq(Athlete::getCollegeId, collegeId)
         );
     }
 
@@ -104,10 +106,8 @@ public class CollegeDAO {
      * @return 关联参赛记录数量
      */
     public Long countParticipationsByCollegeId(Long collegeId) {
-        return jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM as_team_participation WHERE college_id = ? AND deleted = 0",
-                Long.class,
-                collegeId
+        return teamParticipationMapper.selectCount(
+                new LambdaQueryWrapper<TeamParticipation>().eq(TeamParticipation::getCollegeId, collegeId)
         );
     }
 

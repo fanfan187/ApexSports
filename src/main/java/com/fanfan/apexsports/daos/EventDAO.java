@@ -3,10 +3,16 @@ package com.fanfan.apexsports.daos;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fanfan.apexsports.cache.EventCache;
 import com.fanfan.apexsports.constants.EventConstants;
+import com.fanfan.apexsports.entities.Competition;
 import com.fanfan.apexsports.entities.Event;
+import com.fanfan.apexsports.entities.Participation;
 import com.fanfan.apexsports.entities.Record;
+import com.fanfan.apexsports.entities.TeamParticipation;
+import com.fanfan.apexsports.mappers.CompetitionMapper;
 import com.fanfan.apexsports.mappers.EventMapper;
+import com.fanfan.apexsports.mappers.ParticipationMapper;
 import com.fanfan.apexsports.mappers.RecordMapper;
+import com.fanfan.apexsports.mappers.TeamParticipationMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -31,8 +37,8 @@ import java.util.List;
  * 必须改用 {@link JdbcTemplate} 执行原生 SQL（不带 deleted 条件）。
  * </p>
  * <p>
- * 三张引用表（as_participation / as_team_participation / as_competition）当前尚无对应 Entity/Mapper，
- * 引用完整性检查同样使用 JdbcTemplate 原生 SQL（带 deleted = 0 过滤）。
+ * 三张引用表（as_participation / as_team_participation / as_competition）已建立对应 Entity/Mapper，
+ * 引用完整性检查使用 MyBatis-Plus {@code selectCount}（{@code @TableLogic} 自动追加 deleted=0 过滤）。
  * </p>
  * <p>
  * <b>缓存策略：</b>读操作采用 cache-aside 模式（先查缓存→未命中查库→回写缓存），
@@ -51,8 +57,15 @@ public class EventDAO {
 
     private final EventMapper eventMapper;
     private final RecordMapper recordMapper;
+    // ⚠️ 仅 B 类方法（countByCode / countByCodeExcludeId）使用 jdbcTemplate：
+    //    这两处需要绕过 @TableLogic（统计含已软删记录），MBP 无法实现。
+    //    引用完整性检查（countParticipationsByEventId 等三处）已迁移至下方独立 Mapper。
     private final JdbcTemplate jdbcTemplate;
     private final EventCache eventCache;
+    // 引用完整性检查：三张引用表对应的 Mapper（MBP selectCount 自动追加 deleted=0）
+    private final ParticipationMapper participationMapper;
+    private final TeamParticipationMapper teamParticipationMapper;
+    private final CompetitionMapper competitionMapper;
 
     // ==================== 查询操作 ====================
 
@@ -213,49 +226,55 @@ public class EventDAO {
     }
 
     // ==================== 引用完整性检查 ====================
-    // 三张引用表当前无 Entity/Mapper，使用 JdbcTemplate 原生 SQL
-    // 注意：与 as_event 唯一性校验不同，这里需要带 deleted = 0，
-    //       因为我们只关心"未删除的引用"是否阻止项目删除，已删除的引用不算数。
+    // 三张引用表已有对应 Entity/Mapper，使用 MyBatis-Plus selectCount 查询。
+    // 注意：与 as_event 唯一性校验不同，这里只关心"未删除的引用"是否阻止项目删除，
+    //       已删除的引用不算数 —— @TableLogic 自动追加 deleted=0 恰好满足该语义。
 
     /**
      * 检查指定项目下是否存在未删除的个人参赛记录（as_participation）。
+     * <p>
+     * 使用 {@link ParticipationMapper#selectCount} 查询；实体上的 {@code @TableLogic}
+     * 会自动追加 {@code deleted = 0} 条件，与原 JdbcTemplate 实现（带 deleted=0）语义一致。
+     * </p>
      *
      * @param eventId 项目ID
      * @return 关联的未删除个人参赛记录数量
      */
     public Long countParticipationsByEventId(Long eventId) {
-        return jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM as_participation WHERE event_id = ? AND deleted = 0",
-                Long.class,
-                eventId
+        return participationMapper.selectCount(
+                new LambdaQueryWrapper<Participation>().eq(Participation::getEventId, eventId)
         );
     }
 
     /**
      * 检查指定项目下是否存在未删除的集体参赛记录（as_team_participation）。
+     * <p>
+     * 使用 {@link TeamParticipationMapper#selectCount} 查询；实体上的 {@code @TableLogic}
+     * 会自动追加 {@code deleted = 0} 条件，与原 JdbcTemplate 实现（带 deleted=0）语义一致。
+     * </p>
      *
      * @param eventId 项目ID
      * @return 关联的未删除集体参赛记录数量
      */
     public Long countTeamParticipationsByEventId(Long eventId) {
-        return jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM as_team_participation WHERE event_id = ? AND deleted = 0",
-                Long.class,
-                eventId
+        return teamParticipationMapper.selectCount(
+                new LambdaQueryWrapper<TeamParticipation>().eq(TeamParticipation::getEventId, eventId)
         );
     }
 
     /**
      * 检查指定项目是否被未删除的比赛（as_competition）引用。
+     * <p>
+     * 使用 {@link CompetitionMapper#selectCount} 查询；实体上的 {@code @TableLogic}
+     * 会自动追加 {@code deleted = 0} 条件，与原 JdbcTemplate 实现（带 deleted=0）语义一致。
+     * </p>
      *
      * @param eventId 项目ID
      * @return 关联的未删除比赛数量
      */
     public Long countCompetitionsByEventId(Long eventId) {
-        return jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM as_competition WHERE event_id = ? AND deleted = 0",
-                Long.class,
-                eventId
+        return competitionMapper.selectCount(
+                new LambdaQueryWrapper<Competition>().eq(Competition::getEventId, eventId)
         );
     }
 

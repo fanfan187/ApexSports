@@ -1,11 +1,13 @@
 package com.fanfan.apexsports.daos;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.fanfan.apexsports.entities.CompetitionEquipment;
 import com.fanfan.apexsports.entities.Equipment;
+import com.fanfan.apexsports.mappers.CompetitionEquipmentMapper;
 import com.fanfan.apexsports.mappers.EquipmentMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
@@ -14,7 +16,7 @@ import java.util.List;
 /**
  * 器材数据调度层
  * <p>
- * 协调 {@link EquipmentMapper} 与 {@link JdbcTemplate}，负责器材数据的存储、查询和调度。
+ * 协调 {@link EquipmentMapper} 与 {@link CompetitionEquipmentMapper}，负责器材数据的存储、查询和调度。
  * 作为普通 Spring Bean（{@code @Component}），不继承 ServiceImpl，
  * 内部手动填充 createdAt / updatedAt（项目无 MetaObjectHandler），
  * 统一通过 LambdaQueryWrapper 构建条件查询。
@@ -23,8 +25,9 @@ import java.util.List;
  * 除常规 CRUD 外，额外提供：
  * <ul>
  *   <li>{@link #countByCode} / {@link #countByCodeExcludeId}：用于 code 唯一性校验</li>
- *   <li>{@link #updateTotalQuantity}：库存联动原子更新（条件 SQL 防超卖）</li>
- *   <li>{@link #countUnreturnedByEquipmentId}：删除前占用检查（JdbcTemplate 原生 SQL）</li>
+ *   <li>{@link #updateTotalQuantity}：库存联动原子更新（{@code setSql} + {@code apply} 条件防超卖）</li>
+ *   <li>{@link #countUnreturnedByEquipmentId}：删除前占用检查（MBP selectCount，跨表查询 CompetitionEquipmentMapper）</li>
+ *   <li>{@link #deductAvailable} / {@link #restoreAvailable}：赛程模块跨模块调用的库存扣减/恢复（条件 SQL 防超卖）</li>
  * </ul>
  * </p>
  *
@@ -38,7 +41,7 @@ import java.util.List;
 public class EquipmentDAO {
 
     private final EquipmentMapper equipmentMapper;
-    private final JdbcTemplate jdbcTemplate;
+    private final CompetitionEquipmentMapper competitionEquipmentMapper;
 
     // ==================== 查询操作 ====================
 
@@ -108,17 +111,20 @@ public class EquipmentDAO {
     /**
      * 检查器材是否存在未归还的使用记录。
      * <p>
-     * 注意：as_competition_equipment 表当前无 Entity/Mapper，使用 JdbcTemplate 原生 SQL。
-     * 待赛程模块(09)开发时，该表将由赛程模块建立完整分层，本方法届时可重构。
+     * 通过 {@link CompetitionEquipmentMapper} 跨表查询 as_competition_equipment，
+     * 统计指定器材的未归还（status != 2）记录数。
+     * MBP {@code @TableLogic} 会自动追加 {@code deleted = 0} 条件，
+     * 因此无需在 wrapper 中显式指定。
      * </p>
      *
      * @param equipmentId 器材ID
      * @return 未归还（status != 2）的记录数
      */
     public Long countUnreturnedByEquipmentId(Long equipmentId) {
-        return jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM as_competition_equipment WHERE equipment_id = ? AND status != 2 AND deleted = 0",
-                Long.class, equipmentId
+        return competitionEquipmentMapper.selectCount(
+                new LambdaQueryWrapper<CompetitionEquipment>()
+                        .eq(CompetitionEquipment::getEquipmentId, equipmentId)
+                        .ne(CompetitionEquipment::getStatus, 2)
         );
     }
 
@@ -144,15 +150,16 @@ public class EquipmentDAO {
     }
 
     /**
-     * 更新器材总数量，同步调整可用数量（条件 SQL 防超卖）。
+     * 更新器材总数量，同步调整可用数量（{@code setSql} + {@code apply} 条件防超卖）。
      * <p>
-     * <b>重要约束：</b>本方法只处理"管理员编辑器材"场景。
-     * 赛程模块的器材借还（扣减/恢复 available_quantity）应由赛程模块自己的
-     * DAO 实现，使用类似的条件 SQL 模式，确保 available_quantity 不会为负。
+     * 使用 {@link LambdaUpdateWrapper#setSql} 拼接原子 SET 子句，配合
+     * {@link LambdaUpdateWrapper#apply} 在 WHERE 中追加 {@code available_quantity + diff >= 0}
+     * 条件，若扣减后为负则 0 行受影响，返回 false，实现乐观并发下的防超卖语义。
      * </p>
      * <p>
-     * TODO(赛程模块): 当赛程模块开发时，参考本方法的条件 SQL 模式，
-     * 实现 CompetitionEquipmentDAO.deductAvailable() / restoreAvailable()。
+     * <b>重要约束：</b>本方法只处理"管理员编辑器材"场景。
+     * 赛程模块的器材借还（扣减/恢复 available_quantity）由本 DAO 的
+     * {@link #deductAvailable} / {@link #restoreAvailable} 提供。
      * </p>
      *
      * @param id       器材ID
@@ -162,11 +169,13 @@ public class EquipmentDAO {
      */
     public boolean updateTotalQuantity(Long id, int newTotal, int oldTotal) {
         int diff = newTotal - oldTotal;
-        int rows = jdbcTemplate.update(
-                "UPDATE as_equipment SET total_quantity = ?, available_quantity = available_quantity + ?, updated_at = NOW() " +
-                        "WHERE id = ? AND deleted = 0 AND available_quantity + ? >= 0",
-                newTotal, diff, id, diff
-        );
+        LambdaUpdateWrapper<Equipment> wrapper = new LambdaUpdateWrapper<Equipment>()
+                .eq(Equipment::getId, id)
+                .setSql("total_quantity = " + newTotal)
+                .setSql("available_quantity = available_quantity + " + diff)
+                .setSql("updated_at = NOW()")
+                .apply("available_quantity + {0} >= 0", diff);
+        int rows = equipmentMapper.update(null, wrapper);
         return rows > 0;
     }
 
@@ -194,10 +203,13 @@ public class EquipmentDAO {
     }
 
     /**
-     * 扣减器材可用库存（赛程模块分配器材时调用，条件 SQL 防超卖）。
+     * 扣减器材可用库存（赛程模块分配器材时调用，{@code setSql} + {@code apply} 条件防超卖）。
      * <p>
-     * 原子更新 {@code available_quantity = available_quantity - ?}，仅在扣减后非负时成功。
-     * 供赛程模块 {@code CompetitionEquipmentLogic} 跨模块调用，确保分配记录插入与库存扣减在同一事务内原子完成。
+     * 使用 {@link LambdaUpdateWrapper#setSql} 拼接原子 SET 子句，配合
+     * {@link LambdaUpdateWrapper#apply} 在 WHERE 中追加 {@code available_quantity - quantity >= 0}
+     * 条件，仅在扣减后非负时成功；若库存不足则 0 行受影响，返回 false。
+     * 供赛程模块 {@code CompetitionEquipmentLogic} 跨模块调用，确保分配记录插入与库存扣减
+     * 在同一事务内原子完成。
      * </p>
      *
      * @param id       器材ID
@@ -205,29 +217,32 @@ public class EquipmentDAO {
      * @return true=扣减成功，false=库存不足
      */
     public boolean deductAvailable(Long id, int quantity) {
-        int rows = jdbcTemplate.update(
-                "UPDATE as_equipment SET available_quantity = available_quantity - ?, updated_at = NOW() " +
-                        "WHERE id = ? AND deleted = 0 AND available_quantity - ? >= 0",
-                quantity, id, quantity
-        );
+        LambdaUpdateWrapper<Equipment> wrapper = new LambdaUpdateWrapper<Equipment>()
+                .eq(Equipment::getId, id)
+                .setSql("available_quantity = available_quantity - " + quantity)
+                .setSql("updated_at = NOW()")
+                .apply("available_quantity - {0} >= 0", quantity);
+        int rows = equipmentMapper.update(null, wrapper);
         return rows > 0;
     }
 
     /**
      * 恢复器材可用库存（赛程模块归还器材时调用）。
      * <p>
-     * 原子更新 {@code available_quantity = available_quantity + ?}。供赛程模块
-     * {@code CompetitionEquipmentLogic} 跨模块调用，确保状态更新与库存恢复在同一事务内原子完成。
+     * 使用 {@link LambdaUpdateWrapper#setSql} 拼接原子 SET 子句，执行
+     * {@code available_quantity = available_quantity + quantity}。恢复操作无库存上限约束，
+     * 故不需要 {@code apply} 条件。供赛程模块 {@code CompetitionEquipmentLogic} 跨模块调用，
+     * 确保状态更新与库存恢复在同一事务内原子完成。
      * </p>
      *
      * @param id       器材ID
      * @param quantity 恢复数量（必须 > 0）
      */
     public void restoreAvailable(Long id, int quantity) {
-        jdbcTemplate.update(
-                "UPDATE as_equipment SET available_quantity = available_quantity + ?, updated_at = NOW() " +
-                        "WHERE id = ? AND deleted = 0",
-                quantity, id
-        );
+        LambdaUpdateWrapper<Equipment> wrapper = new LambdaUpdateWrapper<Equipment>()
+                .eq(Equipment::getId, id)
+                .setSql("available_quantity = available_quantity + " + quantity)
+                .setSql("updated_at = NOW()");
+        equipmentMapper.update(null, wrapper);
     }
 }
