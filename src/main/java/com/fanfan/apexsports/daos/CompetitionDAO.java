@@ -6,6 +6,10 @@ import com.fanfan.apexsports.cache.CompetitionCache;
 import com.fanfan.apexsports.constants.CompetitionConstants;
 import com.fanfan.apexsports.entities.Competition;
 import com.fanfan.apexsports.entities.Event;
+import com.fanfan.apexsports.entities.Participation;
+import com.fanfan.apexsports.entities.Referee;
+import com.fanfan.apexsports.entities.RefereeAssignment;
+import com.fanfan.apexsports.entities.TeamParticipation;
 import com.fanfan.apexsports.entities.Venue;
 import com.fanfan.apexsports.mappers.AthleteMapper;
 import com.fanfan.apexsports.mappers.CompetitionEquipmentMapper;
@@ -20,12 +24,10 @@ import com.fanfan.apexsports.mappers.VenueMapper;
 import com.fanfan.apexsports.vos.ScheduleBookletVO;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
@@ -44,15 +46,18 @@ import java.util.stream.Collectors;
  * <p>
  * <b>关键技术点：</b>
  * <ul>
- *   <li>6 个冲突检测查询均使用 {@link JdbcTemplate} 原生 SQL，涉及跨表 JOIN
- *       （as_event / as_referee_assignment / as_participation / as_team_participation）。
- *       时间冲突判定采用标准区间交集公式：{@code c.start_time < :endTime AND c.end_time > :startTime}。
- *       所有冲突查询统一排除已取消场次（status != 3）与逻辑删除记录（deleted = 0），
- *       并通过动态拼接 {@code excludeCompetitionId} 条件支持"排除自身"语义
- *       （{@code null} 时不附加该条件，避免 {@code id != null} 误伤全表）。</li>
+ *   <li>6 个冲突检测查询均使用 MyBatis-Plus 两步查询模式：先通过关联表 Mapper
+ *       （EventMapper / RefereeAssignmentMapper / ParticipationMapper / TeamParticipationMapper）
+ *       查询 ID 集合，再用 {@code LambdaQueryWrapper.in(Competition::getId, ids)} 进行场次筛选。
+ *       时间冲突判定采用标准区间交集公式：{@code start_time < endTime AND end_time > startTime}。
+ *       所有冲突查询统一排除已取消场次（{@code status != 3}），并通过动态追加
+ *       {@code excludeCompetitionId} 条件支持"排除自身"语义
+ *       （{@code null} 时不附加该条件，避免 {@code id != null} 误伤全表）。
+ *       逻辑删除由 {@code @TableLogic} 自动追加 {@code deleted = 0}，无需手写。</li>
  *   <li>秩序册聚合采用 cache-aside：先查 {@link CompetitionCache#getBooklet(String)}，
  *       未命中则批量查询场次/项目/场地/裁判/参赛人数，组装 {@link ScheduleBookletVO} 列表后回写缓存。
- *       聚合 VO 构建在 DAO 完成（属于缓存聚合结果，非单条 DO 转换）。</li>
+ *       聚合 VO 构建在 DAO 完成（属于缓存聚合结果，非单条 DO 转换）。
+ *       跨表聚合（参赛人数 GROUP BY、主裁判姓名）通过 CompetitionMapper XML 方法或两步查询实现。</li>
  *   <li>写操作（增/改/删/状态变更）统一驱逐所有秩序册缓存，因为任意赛程变更都可能影响任意日期的聚合结果。</li>
  * </ul>
  * </p>
@@ -94,7 +99,6 @@ public class CompetitionDAO {
     private final AthleteMapper athleteMapper;
     private final RefereeMapper refereeMapper;
     private final EquipmentMapper equipmentMapper;
-    private final JdbcTemplate jdbcTemplate;
     private final CompetitionCache competitionCache;
 
     // ==================== 基础查询 ====================
@@ -182,14 +186,13 @@ public class CompetitionDAO {
      * @return 参赛人数，无记录返回 0
      */
     public Long countParticipantsByCompetitionId(Long competitionId) {
-        Long individual = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM as_participation WHERE competition_id = ? AND deleted = 0",
-                Long.class, competitionId
+        // 个人参赛数：BaseMapper.selectCount（@TableLogic 自动追加 deleted=0）
+        Long individual = participationMapper.selectCount(
+                new LambdaQueryWrapper<Participation>()
+                        .eq(Participation::getCompetitionId, competitionId)
         );
-        Long teamSum = jdbcTemplate.queryForObject(
-                "SELECT COALESCE(SUM(participant_count), 0) FROM as_team_participation WHERE competition_id = ? AND deleted = 0",
-                Long.class, competitionId
-        );
+        // 团体参赛数：SUM(participant_count)，XML 中 COALESCE 保证非 null（@TableLogic 不走 XML，显式 deleted=0）
+        Long teamSum = competitionMapper.countTeamParticipantSum(competitionId);
         long ind = individual != null ? individual : 0L;
         long team = teamSum != null ? teamSum : 0L;
         return ind + team;
@@ -202,20 +205,25 @@ public class CompetitionDAO {
      * @return 主裁判姓名，无主裁判返回 null
      */
     public String getChiefRefereeName(Long competitionId) {
-        List<String> names = jdbcTemplate.query(
-                "SELECT r.name FROM as_referee_assignment ra " +
-                        "JOIN as_referee r ON r.id = ra.referee_id AND r.deleted = 0 " +
-                        "WHERE ra.competition_id = ? AND ra.role = ? AND ra.deleted = 0 " +
-                        "LIMIT 1",
-                (rs, rowNum) -> rs.getString("name"),
-                competitionId, CompetitionConstants.REFEREE_ROLE_CHIEF
+        // 第一步：查该场次的主裁判指派记录（@TableLogic 自动排除已删除指派）
+        RefereeAssignment assignment = refereeAssignmentMapper.selectOne(
+                new LambdaQueryWrapper<RefereeAssignment>()
+                        .eq(RefereeAssignment::getCompetitionId, competitionId)
+                        .eq(RefereeAssignment::getRole, CompetitionConstants.REFEREE_ROLE_CHIEF)
+                        .last("LIMIT 1")
         );
-        return names.isEmpty() ? null : names.get(0);
+        if (assignment == null) {
+            return null;
+        }
+        // 第二步：查裁判姓名（@TableLogic 自动排除已删除裁判，与原 JOIN r.deleted=0 语义一致）
+        Referee referee = refereeMapper.selectById(assignment.getRefereeId());
+        return referee == null ? null : referee.getName();
     }
 
-    // ==================== 冲突检测查询（JdbcTemplate 原生 SQL） ====================
-    // 时间交集公式：c.start_time < :endTime AND c.end_time > :startTime
-    // 统一排除：已取消（status != 3）、逻辑删除（deleted = 0）、自身（excludeCompetitionId 非 null 时附加）
+    // ==================== 冲突检测查询（MyBatis-Plus 两步查询） ====================
+    // 时间交集公式：start_time < endTime AND end_time > startTime
+    // 统一排除：已取消（status != 3）、自身（excludeCompetitionId 非 null 时附加）
+    // 逻辑删除由 @TableLogic 自动追加 deleted=0，无需手写
 
     /**
      * 统计指定时间段内未取消且未删除的径赛场次数量（join as_event 取 category=1 径赛）。
@@ -230,23 +238,29 @@ public class CompetitionDAO {
      */
     public Long countTrackCompetitionsInTimeRange(LocalDateTime startTime, LocalDateTime endTime,
                                                   Long excludeCompetitionId) {
-        StringBuilder sql = new StringBuilder(
-                "SELECT COUNT(*) FROM as_competition c " +
-                        "JOIN as_event e ON e.id = c.event_id AND e.deleted = 0 " +
-                        "WHERE e.category = ? " +
-                        "AND c.start_time < ? AND c.end_time > ? " +
-                        "AND c.status != ? AND c.deleted = 0"
-        );
-        List<Object> params = new ArrayList<>();
-        params.add(1); // 径赛 category=1
-        params.add(endTime);
-        params.add(startTime);
-        params.add(CompetitionConstants.STATUS_CANCELLED);
-        if (excludeCompetitionId != null) {
-            sql.append(" AND c.id != ?");
-            params.add(excludeCompetitionId);
+        // 第一步：查径赛项目 ID 集合（category=1 径赛；@TableLogic 自动排除已删除项目）
+        List<Long> trackEventIds = eventMapper.selectList(
+                        new LambdaQueryWrapper<Event>()
+                                .eq(Event::getCategory, 1)
+                                .select(Event::getId)
+                ).stream()
+                .map(Event::getId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toList());
+        if (trackEventIds.isEmpty()) {
+            // 无径赛项目，短路返回
+            return 0L;
         }
-        return jdbcTemplate.queryForObject(sql.toString(), Long.class, params.toArray());
+        // 第二步：统计这些项目下、时间区间内未取消的场次数
+        LambdaQueryWrapper<Competition> wrapper = new LambdaQueryWrapper<Competition>()
+                .in(Competition::getEventId, trackEventIds)
+                .lt(Competition::getStartTime, endTime)
+                .gt(Competition::getEndTime, startTime)
+                .ne(Competition::getStatus, CompetitionConstants.STATUS_CANCELLED);
+        if (excludeCompetitionId != null) {
+            wrapper.ne(Competition::getId, excludeCompetitionId);
+        }
+        return competitionMapper.selectCount(wrapper);
     }
 
     /**
@@ -260,22 +274,17 @@ public class CompetitionDAO {
      */
     public Long countVenueConflicts(Long venueId, LocalDateTime startTime, LocalDateTime endTime,
                                     Long excludeCompetitionId) {
-        StringBuilder sql = new StringBuilder(
-                "SELECT COUNT(*) FROM as_competition c " +
-                        "WHERE c.venue_id = ? " +
-                        "AND c.start_time < ? AND c.end_time > ? " +
-                        "AND c.status != ? AND c.deleted = 0"
-        );
-        List<Object> params = new ArrayList<>();
-        params.add(venueId);
-        params.add(endTime);
-        params.add(startTime);
-        params.add(CompetitionConstants.STATUS_CANCELLED);
+        // @TableLogic 自动追加 deleted=0；时间交集公式：start_time < endTime AND end_time > startTime
+        LambdaQueryWrapper<Competition> wrapper = new LambdaQueryWrapper<Competition>()
+                .eq(Competition::getVenueId, venueId)
+                .lt(Competition::getStartTime, endTime)
+                .gt(Competition::getEndTime, startTime)
+                .ne(Competition::getStatus, CompetitionConstants.STATUS_CANCELLED);
         if (excludeCompetitionId != null) {
-            sql.append(" AND c.id != ?");
-            params.add(excludeCompetitionId);
+            // null 时不附加，避免 id != null 误伤全表
+            wrapper.ne(Competition::getId, excludeCompetitionId);
         }
-        return jdbcTemplate.queryForObject(sql.toString(), Long.class, params.toArray());
+        return competitionMapper.selectCount(wrapper);
     }
 
     /**
@@ -292,23 +301,29 @@ public class CompetitionDAO {
      */
     public Long countRefereeConflicts(Long refereeId, LocalDateTime startTime, LocalDateTime endTime,
                                       Long excludeCompetitionId) {
-        StringBuilder sql = new StringBuilder(
-                "SELECT COUNT(*) FROM as_competition c " +
-                        "JOIN as_referee_assignment ra ON ra.competition_id = c.id " +
-                        "AND ra.referee_id = ? AND ra.deleted = 0 " +
-                        "WHERE c.start_time < ? AND c.end_time > ? " +
-                        "AND c.status != ? AND c.deleted = 0"
-        );
-        List<Object> params = new ArrayList<>();
-        params.add(refereeId);
-        params.add(endTime);
-        params.add(startTime);
-        params.add(CompetitionConstants.STATUS_CANCELLED);
-        if (excludeCompetitionId != null) {
-            sql.append(" AND c.id != ?");
-            params.add(excludeCompetitionId);
+        // 第一步：查该裁判已指派的场次 ID（@TableLogic 自动排除已删除指派）
+        List<Long> competitionIds = refereeAssignmentMapper.selectList(
+                        new LambdaQueryWrapper<RefereeAssignment>()
+                                .eq(RefereeAssignment::getRefereeId, refereeId)
+                                .select(RefereeAssignment::getCompetitionId)
+                ).stream()
+                .map(RefereeAssignment::getCompetitionId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toList());
+        if (competitionIds.isEmpty()) {
+            // 裁判无任何指派，无冲突
+            return 0L;
         }
-        return jdbcTemplate.queryForObject(sql.toString(), Long.class, params.toArray());
+        // 第二步：统计这些场次中时间冲突的场次数
+        LambdaQueryWrapper<Competition> wrapper = new LambdaQueryWrapper<Competition>()
+                .in(Competition::getId, competitionIds)
+                .lt(Competition::getStartTime, endTime)
+                .gt(Competition::getEndTime, startTime)
+                .ne(Competition::getStatus, CompetitionConstants.STATUS_CANCELLED);
+        if (excludeCompetitionId != null) {
+            wrapper.ne(Competition::getId, excludeCompetitionId);
+        }
+        return competitionMapper.selectCount(wrapper);
     }
 
     /**
@@ -321,10 +336,11 @@ public class CompetitionDAO {
      * @return 主裁判数量
      */
     public Long countChiefReferee(Long competitionId) {
-        Long count = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM as_referee_assignment " +
-                        "WHERE competition_id = ? AND role = ? AND deleted = 0",
-                Long.class, competitionId, CompetitionConstants.REFEREE_ROLE_CHIEF
+        // @TableLogic 自动追加 deleted=0
+        Long count = refereeAssignmentMapper.selectCount(
+                new LambdaQueryWrapper<RefereeAssignment>()
+                        .eq(RefereeAssignment::getCompetitionId, competitionId)
+                        .eq(RefereeAssignment::getRole, CompetitionConstants.REFEREE_ROLE_CHIEF)
         );
         return count != null ? count : 0L;
     }
@@ -343,23 +359,29 @@ public class CompetitionDAO {
      */
     public Long countAthleteTimeConflicts(Long athleteId, LocalDateTime startTime, LocalDateTime endTime,
                                           Long excludeCompetitionId) {
-        StringBuilder sql = new StringBuilder(
-                "SELECT COUNT(*) FROM as_competition c " +
-                        "JOIN as_participation p ON p.competition_id = c.id " +
-                        "AND p.athlete_id = ? AND p.deleted = 0 " +
-                        "WHERE c.start_time < ? AND c.end_time > ? " +
-                        "AND c.status != ? AND c.deleted = 0"
-        );
-        List<Object> params = new ArrayList<>();
-        params.add(athleteId);
-        params.add(endTime);
-        params.add(startTime);
-        params.add(CompetitionConstants.STATUS_CANCELLED);
-        if (excludeCompetitionId != null) {
-            sql.append(" AND c.id != ?");
-            params.add(excludeCompetitionId);
+        // 第一步：查该运动员已编排的场次 ID（@TableLogic 自动排除已删除参赛记录）
+        List<Long> competitionIds = participationMapper.selectList(
+                        new LambdaQueryWrapper<Participation>()
+                                .eq(Participation::getAthleteId, athleteId)
+                                .select(Participation::getCompetitionId)
+                ).stream()
+                .map(Participation::getCompetitionId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toList());
+        if (competitionIds.isEmpty()) {
+            // 运动员未参加任何场次，无冲突
+            return 0L;
         }
-        return jdbcTemplate.queryForObject(sql.toString(), Long.class, params.toArray());
+        // 第二步：统计这些场次中时间冲突的场次数
+        LambdaQueryWrapper<Competition> wrapper = new LambdaQueryWrapper<Competition>()
+                .in(Competition::getId, competitionIds)
+                .lt(Competition::getStartTime, endTime)
+                .gt(Competition::getEndTime, startTime)
+                .ne(Competition::getStatus, CompetitionConstants.STATUS_CANCELLED);
+        if (excludeCompetitionId != null) {
+            wrapper.ne(Competition::getId, excludeCompetitionId);
+        }
+        return competitionMapper.selectCount(wrapper);
     }
 
     /**
@@ -376,23 +398,29 @@ public class CompetitionDAO {
      */
     public Long countCollegeTeamTimeConflicts(Long collegeId, LocalDateTime startTime, LocalDateTime endTime,
                                               Long excludeCompetitionId) {
-        StringBuilder sql = new StringBuilder(
-                "SELECT COUNT(*) FROM as_competition c " +
-                        "JOIN as_team_participation tp ON tp.competition_id = c.id " +
-                        "AND tp.college_id = ? AND tp.deleted = 0 " +
-                        "WHERE c.start_time < ? AND c.end_time > ? " +
-                        "AND c.status != ? AND c.deleted = 0"
-        );
-        List<Object> params = new ArrayList<>();
-        params.add(collegeId);
-        params.add(endTime);
-        params.add(startTime);
-        params.add(CompetitionConstants.STATUS_CANCELLED);
-        if (excludeCompetitionId != null) {
-            sql.append(" AND c.id != ?");
-            params.add(excludeCompetitionId);
+        // 第一步：查该学院已编排的团体场次 ID（@TableLogic 自动排除已删除团体参赛记录）
+        List<Long> competitionIds = teamParticipationMapper.selectList(
+                        new LambdaQueryWrapper<TeamParticipation>()
+                                .eq(TeamParticipation::getCollegeId, collegeId)
+                                .select(TeamParticipation::getCompetitionId)
+                ).stream()
+                .map(TeamParticipation::getCompetitionId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toList());
+        if (competitionIds.isEmpty()) {
+            // 学院未参加任何团体场次，无冲突
+            return 0L;
         }
-        return jdbcTemplate.queryForObject(sql.toString(), Long.class, params.toArray());
+        // 第二步：统计这些场次中时间冲突的场次数
+        LambdaQueryWrapper<Competition> wrapper = new LambdaQueryWrapper<Competition>()
+                .in(Competition::getId, competitionIds)
+                .lt(Competition::getStartTime, endTime)
+                .gt(Competition::getEndTime, startTime)
+                .ne(Competition::getStatus, CompetitionConstants.STATUS_CANCELLED);
+        if (excludeCompetitionId != null) {
+            wrapper.ne(Competition::getId, excludeCompetitionId);
+        }
+        return competitionMapper.selectCount(wrapper);
     }
 
     // ==================== 写入操作 ====================
@@ -515,8 +543,8 @@ public class CompetitionDAO {
      * <ul>
      *   <li>项目信息（name/type/category）：{@code eventMapper.selectBatchIds}</li>
      *   <li>场地名称：{@code venueMapper.selectBatchIds}</li>
-     *   <li>主裁判姓名：单条 SQL join as_referee_assignment + as_referee，IN 批量查询</li>
-     *   <li>参赛人数：两条 SQL 分别 GROUP BY 统计个人/团体参赛数，合并为 Map</li>
+     *   <li>主裁判姓名：两步查询（refereeAssignmentMapper.selectList + refereeMapper.selectBatchIds）</li>
+     *   <li>参赛人数：CompetitionMapper XML 方法分别 GROUP BY 统计个人/团体参赛数，合并为 Map</li>
      * </ul>
      * </p>
      *
@@ -580,20 +608,34 @@ public class CompetitionDAO {
         if (competitionIds == null || competitionIds.isEmpty()) {
             return Collections.emptyMap();
         }
-        String placeholders = buildInPlaceholders(competitionIds.size());
-        String sql = "SELECT ra.competition_id AS competition_id, r.name AS name " +
-                "FROM as_referee_assignment ra " +
-                "JOIN as_referee r ON r.id = ra.referee_id AND r.deleted = 0 " +
-                "WHERE ra.role = ? AND ra.deleted = 0 " +
-                "AND ra.competition_id IN (" + placeholders + ")";
-        List<Object> params = new ArrayList<>();
-        params.add(CompetitionConstants.REFEREE_ROLE_CHIEF);
-        params.addAll(competitionIds);
+        // 第一步：批量查这些场次的主裁判指派记录（@TableLogic 自动排除已删除指派）
+        List<RefereeAssignment> assignments = refereeAssignmentMapper.selectList(
+                new LambdaQueryWrapper<RefereeAssignment>()
+                        .in(RefereeAssignment::getCompetitionId, competitionIds)
+                        .eq(RefereeAssignment::getRole, CompetitionConstants.REFEREE_ROLE_CHIEF)
+        );
+        if (assignments.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        // 第二步：批量查裁判姓名（@TableLogic 自动排除已删除裁判，等价原 JOIN r.deleted=0）
+        List<Long> refereeIds = assignments.stream()
+                .map(RefereeAssignment::getRefereeId)
+                .filter(Objects::nonNull)
+                .distinct()
+                .collect(Collectors.toList());
+        Map<Long, String> refereeNameById = refereeIds.isEmpty()
+                ? Collections.emptyMap()
+                : refereeMapper.selectBatchIds(refereeIds).stream()
+                        .collect(Collectors.toMap(Referee::getId, Referee::getName, (a, b) -> a));
+        // 第三步：Java 层组装 competitionId → refereeName
         Map<Long, String> result = new HashMap<>();
-        jdbcTemplate.query(sql, (rs, rowNum) -> {
-            result.put(rs.getLong("competition_id"), rs.getString("name"));
-            return null;
-        }, params.toArray());
+        for (RefereeAssignment ra : assignments) {
+            String name = refereeNameById.get(ra.getRefereeId());
+            if (name != null) {
+                // 裁判被逻辑删除时跳过（与原 JOIN 行为一致）
+                result.put(ra.getCompetitionId(), name);
+            }
+        }
         return result;
     }
 
@@ -607,29 +649,29 @@ public class CompetitionDAO {
         if (competitionIds == null || competitionIds.isEmpty()) {
             return Collections.emptyMap();
         }
-        String placeholders = buildInPlaceholders(competitionIds.size());
         Map<Long, Long> result = new HashMap<>();
         competitionIds.forEach(id -> result.put(id, 0L));
 
-        // 个人参赛数
-        String individualSql = "SELECT competition_id AS competition_id, COUNT(*) AS cnt " +
-                "FROM as_participation WHERE deleted = 0 " +
-                "AND competition_id IN (" + placeholders + ") " +
-                "GROUP BY competition_id";
-        jdbcTemplate.query(individualSql, (rs, rowNum) -> {
-            result.merge(rs.getLong("competition_id"), rs.getLong("cnt"), Long::sum);
-            return null;
-        }, competitionIds.toArray());
+        // 个人参赛数：XML 中 GROUP BY COUNT（XML 不走 @TableLogic，已显式 deleted=0）
+        List<Map<String, Object>> individualRows = competitionMapper.batchCountIndividualParticipants(competitionIds);
+        if (individualRows != null) {
+            for (Map<String, Object> row : individualRows) {
+                // 列驱动可能返回 BigDecimal/BigInteger/Integer，统一用 Number.longValue() 转换最安全
+                Long competitionId = ((Number) row.get("competition_id")).longValue();
+                Long cnt = ((Number) row.get("cnt")).longValue();
+                result.merge(competitionId, cnt, Long::sum);
+            }
+        }
 
-        // 团体参赛数（按 participant_count 求和）
-        String teamSql = "SELECT competition_id AS competition_id, COALESCE(SUM(participant_count), 0) AS cnt " +
-                "FROM as_team_participation WHERE deleted = 0 " +
-                "AND competition_id IN (" + placeholders + ") " +
-                "GROUP BY competition_id";
-        jdbcTemplate.query(teamSql, (rs, rowNum) -> {
-            result.merge(rs.getLong("competition_id"), rs.getLong("cnt"), Long::sum);
-            return null;
-        }, competitionIds.toArray());
+        // 团体参赛数：XML 中 GROUP BY SUM(participant_count)
+        List<Map<String, Object>> teamRows = competitionMapper.batchSumTeamParticipants(competitionIds);
+        if (teamRows != null) {
+            for (Map<String, Object> row : teamRows) {
+                Long competitionId = ((Number) row.get("competition_id")).longValue();
+                Long cnt = ((Number) row.get("cnt")).longValue();
+                result.merge(competitionId, cnt, Long::sum);
+            }
+        }
 
         return result;
     }
