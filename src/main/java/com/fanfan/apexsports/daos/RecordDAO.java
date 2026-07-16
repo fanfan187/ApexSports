@@ -106,6 +106,39 @@ public class RecordDAO {
         return best;
     }
 
+    // ==================== 列表查询（支持可选筛选） ====================
+
+    /**
+     * 查询记录列表（eventId / recordType / status 三个可选筛选）。
+     * <p>
+     * 三个参数均为可选（null 表示不过滤该维度），结果按 {@code recordDate DESC} 排序。
+     * 不做业务校验、不转 VO，直接返回 DO 列表，由 Logic 层负责 DO→VO 转换。
+     * </p>
+     *
+     * @param eventId    项目ID筛选（可选）
+     * @param recordType 记录类型筛选（可选）：1-校记录 / 2-市记录 / 3-省记录
+     * @param status     状态筛选（可选）：0-已作废 / 1-有效
+     * @return 记录实体列表（按创造记录日期倒序）
+     */
+    public List<Record> findAll(Long eventId, Integer recordType, Integer status) {
+        LambdaQueryWrapper<Record> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(eventId != null, Record::getEventId, eventId)
+                .eq(recordType != null, Record::getRecordType, recordType)
+                .eq(status != null, Record::getStatus, status)
+                .orderByDesc(Record::getRecordDate);
+        return recordMapper.selectList(wrapper);
+    }
+
+    /**
+     * 根据 ID 查询记录。
+     *
+     * @param id 记录ID
+     * @return 记录实体，不存在返回 {@code null}（由 Logic 层判空并抛 RECORD_NOT_FOUND）
+     */
+    public Record getById(Long id) {
+        return recordMapper.selectById(id);
+    }
+
     // ==================== 写入 ====================
 
     /**
@@ -154,5 +187,42 @@ public class RecordDAO {
         recordMapper.updateById(patch);
         // 写操作：驱逐该 eventId + recordType 维度的最优缓存
         recordCache.evict(existing.getEventId(), existing.getRecordType());
+    }
+
+    /**
+     * 按非空字段部分更新记录，并驱逐相关维度缓存（G2 缓存一致性修复）。
+     * <p>
+     * 三步执行：
+     * <ol>
+     *   <li>查出 existing 记录；若不存在则静默返回（Logic 层负责抛 RECORD_NOT_FOUND）。</li>
+     *   <li>覆盖 id 与 updatedAt 后调用 {@code updateById}（MBP 默认仅 SET 非空字段，
+     *       正好实现部分更新语义）。</li>
+     *   <li>驱逐缓存：old 维度（existing.eventId + existing.recordType）必驱；
+     *       若 patch.recordType 非空且与 existing 不同，<b>额外</b>驱逐 new 维度
+     *       （existing.eventId + patch.recordType），因为 recordType 变更意味着
+     *       旧类型最优缓存已失效，新类型的槽位也可能被这次更新影响。</li>
+     * </ol>
+     * </p>
+     *
+     * @param id    待更新记录ID
+     * @param patch 携带部分更新字段的实体（非空字段才会被写入）
+     */
+    public void updateSelective(Long id, Record patch) {
+        // Step 1: 查出现有记录，缺失则静默返回（Logic 层负责抛 RECORD_NOT_FOUND）
+        Record existing = recordMapper.selectById(id);
+        if (existing == null) {
+            return;
+        }
+        // Step 2: 部分更新（MBP updateById 仅 SET 非空字段）
+        patch.setId(id);
+        patch.setUpdatedAt(LocalDateTime.now());
+        recordMapper.updateById(patch);
+        // Step 3: 驱逐缓存 —— old 维度必驱
+        recordCache.evict(existing.getEventId(), existing.getRecordType());
+        // 若 recordType 变更，新维度的最优缓存也可能受影响，一并驱逐
+        if (patch.getRecordType() != null
+                && !patch.getRecordType().equals(existing.getRecordType())) {
+            recordCache.evict(existing.getEventId(), patch.getRecordType());
+        }
     }
 }

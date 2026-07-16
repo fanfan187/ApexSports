@@ -80,6 +80,7 @@ public enum ErrorCode {
     REFEREE_ASSIGNMENT_NOT_FOUND(40414, "裁判分配不存在"),
     COMPETITION_EQUIPMENT_NOT_FOUND(40415, "器材使用记录不存在"),
     SCORE_NOT_FOUND(40416, "成绩不存在"),
+    RECORD_NOT_FOUND(40417, "记录不存在"),
 
     // 409xx - 赛程模块冲突
     TRACK_TIME_CONFLICT(40941, "径赛时间冲突：该时间段内已有径赛进行"),
