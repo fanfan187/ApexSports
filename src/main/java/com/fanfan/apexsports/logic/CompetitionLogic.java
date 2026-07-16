@@ -15,6 +15,7 @@ import com.fanfan.apexsports.daos.EventDAO;
 import com.fanfan.apexsports.daos.ParticipationDAO;
 import com.fanfan.apexsports.daos.RefereeAssignmentDAO;
 import com.fanfan.apexsports.daos.RefereeDAO;
+import com.fanfan.apexsports.daos.ScoreDAO;
 import com.fanfan.apexsports.daos.TeamParticipationDAO;
 import com.fanfan.apexsports.daos.VenueDAO;
 import com.fanfan.apexsports.dtos.BatchArrangeDTO;
@@ -92,6 +93,7 @@ public class CompetitionLogic implements CompetitionService {
     private final ParticipationDAO participationDAO;
     private final TeamParticipationDAO teamParticipationDAO;
     private final RefereeDAO refereeDAO;
+    private final ScoreDAO scoreDAO;
     private final AthleteDAO athleteDAO;
     private final CollegeDAO collegeDAO;
     private final EquipmentDAO equipmentDAO;
@@ -443,7 +445,10 @@ public class CompetitionLogic implements CompetitionService {
             throw new BusinessException(ErrorCode.COMPETITION_IN_PROGRESS);
         }
 
-        // TODO: 成绩模块实现后补充成绩校验（as_score 有记录则禁止删除）
+        // 成绩校验：该场次下已录入成绩则禁止删除，避免成绩孤立
+        if (!scoreDAO.findByCompetitionId(id).isEmpty()) {
+            throw new BusinessException(ErrorCode.SCORE_ALREADY_EXISTS);
+        }
 
         // 级联处理 1：裁判分配逻辑删除
         List<RefereeAssignment> assignments = refereeAssignmentDAO.findByCompetitionId(id);
@@ -623,7 +628,10 @@ public class CompetitionLogic implements CompetitionService {
             throw new BusinessException(ErrorCode.PARTICIPATION_NOT_IN_COMPETITION);
         }
 
-        // TODO: 成绩模块实现后补充成绩校验（有成绩记录则禁止移除编排）
+        // 成绩校验：该个人编排已有成绩记录则禁止移除，避免成绩孤立
+        if (scoreDAO.existsByParticipationId(participationId)) {
+            throw new BusinessException(ErrorCode.SCORE_ALREADY_EXISTS);
+        }
 
         // 使用 LambdaUpdateWrapper 显式置 null，绕开 updateById 默认 NOT_NULL 策略
         participationDAO.clearCompetitionArrangement(participationId);
@@ -717,7 +725,10 @@ public class CompetitionLogic implements CompetitionService {
             throw new BusinessException(ErrorCode.TEAM_NOT_IN_COMPETITION);
         }
 
-        // TODO: 成绩模块实现后补充成绩校验（有成绩记录则禁止移除编排）
+        // 成绩校验：该团体编排已有成绩记录则禁止移除，避免成绩孤立
+        if (scoreDAO.existsByTeamParticipationId(teamParticipationId)) {
+            throw new BusinessException(ErrorCode.TEAM_SCORE_ALREADY_EXISTS);
+        }
 
         // 使用 LambdaUpdateWrapper 显式置 null，绕开 updateById 默认 NOT_NULL 策略
         teamParticipationDAO.clearCompetitionArrangement(teamParticipationId);

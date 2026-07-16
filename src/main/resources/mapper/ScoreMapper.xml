@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.fanfan.apexsports.mappers.ScoreMapper">
+
+    <!--
+        成绩明细连表查询结果集映射
+        返回类型 com.fanfan.apexsports.vos.ScoreDetailVO，property 名与 VO 字段完全对齐：
+          id/participationId/teamParticipationId/athleteName/collegeName/eventName/
+          competitionName/rank/points/scoreValue/scoreDisplay/isRecordBreaking/createdAt
+
+        字段：
+          as_score 子集（排除 athleteId/collegeId/competitionId/updatedAt/remark，这些不在 VO 中）
+          + athleteName / collegeName / eventName / competitionName（连表取名称）
+        注意：
+          1. column 使用 SQL 中 AS 别名（snake_case），property 为 VO 字段名（camelCase）
+          2. 原生 XML 中 @TableLogic 不生效，所有表各自显式 deleted = 0
+          3. participation / athlete 用 LEFT JOIN：团体成绩 participationId 为 null，
+             INNER JOIN 会丢失团体成绩行；athleteName 在团体成绩下为 null（语义正确）
+          4. eventName 通过 as_competition.event_id JOIN as_event 获取
+             （as_score 表无 event_id 列，项目维度由 competition 携带）
+    -->
+    <resultMap id="ScoreDetailMap" type="com.fanfan.apexsports.vos.ScoreDetailVO">
+        <id     property="id"                  column="id"/>
+        <result property="participationId"     column="participation_id"/>
+        <result property="teamParticipationId" column="team_participation_id"/>
+        <result property="rank"                column="rank"/>
+        <result property="points"              column="points"/>
+        <result property="scoreValue"          column="score"/>
+        <result property="scoreDisplay"        column="score_display"/>
+        <result property="isRecordBreaking"    column="is_record_breaking"/>
+        <result property="createdAt"           column="created_at"/>
+        <result property="athleteName"         column="athlete_name"/>
+        <result property="collegeName"         column="college_name"/>
+        <result property="eventName"          column="event_name"/>
+        <result property="competitionName"     column="competition_name"/>
+    </resultMap>
+
+    <!--
+        成绩明细连表分页查询（5 表 LEFT JOIN）
+        路径：as_score s
+                LEFT JOIN as_participation p ON s.participation_id = p.id   （LEFT：团体成绩 participationId 为 null）
+                LEFT JOIN as_athlete       a ON p.athlete_id      = a.id     （LEFT：团体成绩无对应运动员，athleteName 为 null）
+                LEFT JOIN as_college       c ON s.college_id      = c.id
+                LEFT JOIN as_competition  cp ON s.competition_id   = cp.id
+                LEFT JOIN as_event         e ON cp.event_id        = e.id     （as_score 无 event_id，项目维度走 competition）
+        ⚠️ 原生 XML 中 @TableLogic 不生效，5 张表各自显式 deleted = 0（置于 ON 子句，避免 LEFT JOIN 退化为 INNER）
+        可选过滤：competitionId
+        排序：s.id DESC（按录入倒序）
+        分页：MyBatis-Plus 插件注入，xml 不写 LIMIT
+        注意：rank 为 MySQL 8 函数名但非保留字，此处作为列名直接使用安全
+    -->
+    <select id="findByPage" resultMap="ScoreDetailMap">
+        SELECT s.id,
+               s.participation_id,
+               s.team_participation_id,
+               s.rank,
+               s.points,
+               s.score,
+               s.score_display,
+               s.is_record_breaking,
+               s.created_at,
+               a.name AS athlete_name,
+               c.name AS college_name,
+               e.name AS event_name,
+               cp.name AS competition_name
+        FROM as_score s
+        LEFT JOIN as_participation p ON s.participation_id = p.id AND p.deleted = 0
+        LEFT JOIN as_athlete        a ON p.athlete_id       = a.id AND a.deleted = 0
+        LEFT JOIN as_college        c ON s.college_id      = c.id AND c.deleted = 0
+        LEFT JOIN as_competition   cp ON s.competition_id  = cp.id AND cp.deleted = 0
+        LEFT JOIN as_event          e ON cp.event_id        = e.id AND e.deleted = 0
+        WHERE s.deleted = 0
+        <if test="competitionId != null">
+            AND s.competition_id = #{competitionId}
+        </if>
+        ORDER BY s.id DESC
+    </select>
+
+</mapper>

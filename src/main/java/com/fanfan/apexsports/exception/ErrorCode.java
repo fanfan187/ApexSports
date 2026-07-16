@@ -79,6 +79,7 @@ public enum ErrorCode {
     COMPETITION_NOT_FOUND(40413, "比赛场次不存在"),
     REFEREE_ASSIGNMENT_NOT_FOUND(40414, "裁判分配不存在"),
     COMPETITION_EQUIPMENT_NOT_FOUND(40415, "器材使用记录不存在"),
+    SCORE_NOT_FOUND(40416, "成绩不存在"),
 
     // 409xx - 赛程模块冲突
     TRACK_TIME_CONFLICT(40941, "径赛时间冲突：该时间段内已有径赛进行"),
@@ -98,6 +99,11 @@ public enum ErrorCode {
     INVALID_STATUS_TRANSITION(40955, "非法状态流转"),
     PARTICIPATION_NOT_IN_COMPETITION(40956, "该参赛记录未编排到此场次"),
     TEAM_NOT_IN_COMPETITION(40957, "该团体未编排到此场次"),
+
+    // 409xx - 成绩模块冲突
+    SCORE_ALREADY_EXISTS(40961, "该参赛成绩已录入"),
+    TEAM_SCORE_ALREADY_EXISTS(40962, "该团体成绩已录入"),
+    SCORE_RECORD_OPERATION_FAILED(40963, "破纪录操作失败"),
 
     // 500xx - 系统错误
     INTERNAL_ERROR(50000, "系统内部错误");
