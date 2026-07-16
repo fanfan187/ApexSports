@@ -6,7 +6,6 @@ import com.fanfan.apexsports.entities.Record;
 import com.fanfan.apexsports.mappers.RecordMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
@@ -63,7 +62,6 @@ public class RecordDAO {
 
     private final RecordMapper recordMapper;
     private final RecordCache recordCache;
-    private final JdbcTemplate jdbcTemplate;
 
     // ==================== 查询 ====================
 

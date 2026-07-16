@@ -1,6 +1,7 @@
 package com.fanfan.apexsports.entities;
 
 import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableLogic;
 import com.baomidou.mybatisplus.annotation.TableName;
@@ -55,7 +56,8 @@ public class Score implements Serializable {
     /** 比赛场次ID */
     private Long competitionId;
 
-    /** 名次 */
+    /** 名次（MySQL 8 保留字，需用反引号转义） */
+    @TableField("`rank`")
     private Integer rank;
 
     /** 得分(积分) */

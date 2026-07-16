@@ -10,7 +10,6 @@ import com.fanfan.apexsports.mappers.ScoreMapper;
 import com.fanfan.apexsports.vos.ScoreDetailVO;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
@@ -64,7 +63,6 @@ public class ScoreDAO {
 
     private final ScoreMapper scoreMapper;
     private final ScoreCache scoreCache;
-    private final JdbcTemplate jdbcTemplate;
 
     // ==================== 基础查询 ====================
 

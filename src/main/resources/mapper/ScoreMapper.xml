@@ -47,13 +47,14 @@
         可选过滤：competitionId
         排序：s.id DESC（按录入倒序）
         分页：MyBatis-Plus 插件注入，xml 不写 LIMIT
-        注意：rank 为 MySQL 8 函数名但非保留字，此处作为列名直接使用安全
+        注意：rank 为 MySQL 8 窗口函数 RANK() 的同名关键字，
+              作为列名必须用反引号转义（s.`rank`），否则被解析为函数调用导致语法错误
     -->
     <select id="findByPage" resultMap="ScoreDetailMap">
         SELECT s.id,
                s.participation_id,
                s.team_participation_id,
-               s.rank,
+               s.`rank`,
                s.points,
                s.score,
                s.score_display,

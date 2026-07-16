@@ -5,7 +5,6 @@ import com.fanfan.apexsports.entities.CollegeScoreSummary;
 import com.fanfan.apexsports.mappers.CollegeScoreSummaryMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
@@ -42,7 +41,6 @@ public class CollegeScoreSummaryDAO {
     // ==================== 依赖注入 ====================
 
     private final CollegeScoreSummaryMapper collegeScoreSummaryMapper;
-    private final JdbcTemplate jdbcTemplate;
 
     // ==================== 基础查询 ====================
 
