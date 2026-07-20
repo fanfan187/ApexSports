@@ -1,36 +1,47 @@
 package com.fanfan.apexsports.daos;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.fanfan.apexsports.cache.CollegeScoreSummaryCache;
 import com.fanfan.apexsports.entities.CollegeScoreSummary;
 import com.fanfan.apexsports.mappers.CollegeScoreSummaryMapper;
+import com.fanfan.apexsports.vos.CollegeRankingVO;
+import com.fanfan.apexsports.vos.EventScoreDetailVO;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.List;
 
 /**
  * 学院积分汇总数据调度层
  * <p>
- * 协调 {@link CollegeScoreSummaryMapper}，负责 as_college_score_summary 表的查询与
- * 增量更新/回滚。积分 delta 由成绩模块 Logic 层算好传入，DAO 只负责 apply 到汇总行，
- * 不做全量重算（全量重算由模块12 Logic 触发，本 DAO 不提供该能力）。
+ * 协调 {@link CollegeScoreSummaryMapper} 与 {@link CollegeScoreSummaryCache}，负责 as_college_score_summary 表的
+ * 查询、增量更新/回滚、全量重算与排名缓存调度。积分 delta 由成绩模块 Logic 层算好传入，
+ * DAO 只负责 apply 到汇总行；全量重算走「物理清空 + 聚合 INSERT」原子流程。
  * </p>
  * <p>
  * <b>方法语义：</b>
  * <ul>
  *   <li>{@link #upsertIncrement}：不存在则插入全0 + delta 的合并结果；存在则按字段累加。</li>
  *   <li>{@link #rollbackIncrement}：仅对已存在记录按 delta 反向减回；不存在则记 warn 跳过。</li>
+ *   <li>{@link #findAllRankings} / {@link #findRankingByCollegeId}：cache-aside 读路径，未命中回源查
+ *       {@code v_college_ranking} 视图并回填缓存。</li>
+ *   <li>{@link #findEventScoreDetails}：单学院成绩明细，无缓存（明细数据量小且变更频繁，直接查库）。</li>
+ *   <li>{@link #fullRecalculate}：@Transactional 原子流程，物理清空 + 聚合 INSERT + 统计，
+ *       返回 {@link FullRecalcResult} 供 Logic 组装刷新结果 VO。</li>
  * </ul>
  * </p>
  * <p>
- * <b>红线遵守：</b>DAO 层不直接操作 Redis、不出现 redis/db/rdb 字样、不做业务校验
- * （如 delta 正负、是否存在汇总行由 Logic 保证）、不做 DO→VO 转换。
+ * <b>红线遵守：</b>DAO 层不直接操作底层缓存中间件（通过 {@link CollegeScoreSummaryCache}）、
+ * 不出现底层存储相关字样、不做业务校验（如 delta 正负、是否存在汇总行由 Logic 保证）、
+ * 不做 DO→VO 转换（VO 由 Mapper 直接返回，DAO 透传）。
  * </p>
  *
  * @author fanfan187
- * @version v1.0.0
+ * @version v1.1.0
  * @since v1.0.0
  */
 @Slf4j
@@ -41,6 +52,7 @@ public class CollegeScoreSummaryDAO {
     // ==================== 依赖注入 ====================
 
     private final CollegeScoreSummaryMapper collegeScoreSummaryMapper;
+    private final CollegeScoreSummaryCache cache;
 
     // ==================== 基础查询 ====================
 
@@ -179,5 +191,106 @@ public class CollegeScoreSummaryDAO {
      */
     private static int zeroIfNullInt(Integer v) {
         return v == null ? 0 : v;
+    }
+
+    // ==================== 排名查询（cache-aside） ====================
+
+    /**
+     * 查询全部学院总积分排名列表（接口82 列表）。
+     * <p>
+     * cache-aside 读路径：先查列表缓存，未命中回源查 {@code v_college_ranking} 视图并回填缓存。
+     * 排名属于「低写高读」数据，列表不分页，整列表作为单 key 缓存。
+     * </p>
+     *
+     * @return 全部学院排名列表，按 ranking 升序
+     */
+    public List<CollegeRankingVO> findAllRankings() {
+        List<CollegeRankingVO> cached = cache.getList();
+        if (cached != null) {
+            return cached;
+        }
+        List<CollegeRankingVO> data = collegeScoreSummaryMapper.selectAllRankings();
+        cache.cacheList(data);
+        return data;
+    }
+
+    /**
+     * 查询单个学院的排名行（接口83 头部数据）。
+     * <p>
+     * cache-aside 读路径：先查单学院缓存，未命中回源查 {@code v_college_ranking} 视图并回填缓存。
+     * </p>
+     *
+     * @param collegeId 学院ID
+     * @return 该学院排名行；不存在返回 {@code null}（由 Logic 层判空抛 BusinessException）
+     */
+    public CollegeRankingVO findRankingByCollegeId(Long collegeId) {
+        CollegeRankingVO cached = cache.getSingle(collegeId);
+        if (cached != null) {
+            return cached;
+        }
+        CollegeRankingVO data = collegeScoreSummaryMapper.selectRankingByCollegeId(collegeId);
+        cache.cacheSingle(collegeId, data);
+        return data;
+    }
+
+    // ==================== 单学院成绩明细（无缓存，直接查库） ====================
+
+    /**
+     * 查询单学院的成绩明细列表（接口83 明细数组）。
+     * <p>
+     * 明细数据量小且变更频繁（任意成绩录入/修改都会影响），不做缓存，直接查库。
+     * 返回的 {@link EventScoreDetailVO} 不含 medalType 字段，由 Logic 层用
+     * {@code ScoreConstants.getMedal(rank)} 填充。
+     * </p>
+     *
+     * @param collegeId 学院ID
+     * @return 该学院的全部成绩明细，按 points DESC 排序
+     */
+    public List<EventScoreDetailVO> findEventScoreDetails(Long collegeId) {
+        return collegeScoreSummaryMapper.selectEventScoreDetails(collegeId);
+    }
+
+    // ==================== 全量重算（@Transactional 原子流程） ====================
+
+    /**
+     * 全量重算学院积分汇总：物理清空 + 聚合 INSERT + 统计，原子事务。
+     * <p>
+     * <b>流程：</b>
+     * <ol>
+     *   <li>{@link CollegeScoreSummaryMapper#physicalDeleteAll} 物理清空 as_college_score_summary 表
+     *       （DELETE 而非 TRUNCATE，保证与 {@code @Transactional} 配合可回滚）；</li>
+     *   <li>{@link CollegeScoreSummaryMapper#insertAggregatedFromScores} 聚合 as_score 表按学院维度
+     *       统计积分/金银铜牌数/个人团体积分，直接 INSERT INTO as_college_score_summary；</li>
+     *   <li>{@link CollegeScoreSummaryMapper#countDistinctEvents} 统计参与排名的不同项目数。</li>
+     * </ol>
+     * </p>
+     * <p>
+     * <b>事务：</b>{@code @Transactional(rollbackFor = Exception.class)} 保证清空与插入原子性，
+     * 任意步骤抛异常则全部回滚（避免清空后未插入导致排名数据丢失）。
+     * </p>
+     * <p>
+     * <b>缓存驱逐与分布式锁：</b>本方法只负责数据重算，不驱逐缓存、不获取刷新锁；
+     * 由调用方 Logic 层在 {@code finally} 中调用 {@link CollegeScoreSummaryCache#evictAll}
+     * 驱逐缓存，并用 {@link CollegeScoreSummaryCache#tryAcquireRefreshLock} /
+     * {@link CollegeScoreSummaryCache#releaseRefreshLock} 保证刷新互斥。
+     * </p>
+     *
+     * @return 重算结果（受影响学院数 + 参与排名的不同项目数），供 Logic 组装刷新结果 VO
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public FullRecalcResult fullRecalculate() {
+        collegeScoreSummaryMapper.physicalDeleteAll();
+        int affectedColleges = collegeScoreSummaryMapper.insertAggregatedFromScores();
+        int totalEvents = collegeScoreSummaryMapper.countDistinctEvents();
+        return new FullRecalcResult(affectedColleges, totalEvents);
+    }
+
+    /**
+     * 全量重算结果，供 Logic 层组装 {@code ScoreRefreshResultVO}。
+     *
+     * @param affectedColleges 受影响学院数（聚合 INSERT 影响行数）
+     * @param totalEvents      参与排名的不同项目数
+     */
+    public record FullRecalcResult(int affectedColleges, int totalEvents) {
     }
 }
