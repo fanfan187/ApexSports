@@ -105,6 +105,7 @@ public enum ErrorCode {
     SCORE_ALREADY_EXISTS(40961, "该参赛成绩已录入"),
     TEAM_SCORE_ALREADY_EXISTS(40962, "该团体成绩已录入"),
     SCORE_RECORD_OPERATION_FAILED(40963, "破纪录操作失败"),
+    SCORE_REFRESH_IN_PROGRESS(40964, "积分刷新任务正在执行中，请稍后重试"),
 
     // 500xx - 系统错误
     INTERNAL_ERROR(50000, "系统内部错误");

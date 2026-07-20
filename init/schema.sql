@@ -324,6 +324,7 @@ CREATE TABLE `as_college_score_summary` (
     `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '汇总ID',
     `college_id` BIGINT NOT NULL COMMENT '学院ID',
     `sports_meet_id` VARCHAR(50) DEFAULT NULL COMMENT '运动会ID/届次',
+    -- 注：本系统按单运动会设计，sports_meet_id 为未来多运动会扩展预留，当前代码层不感知
     `total_points` INT NOT NULL DEFAULT 0 COMMENT '总积分',
     `gold_count` INT NOT NULL DEFAULT 0 COMMENT '金牌数',
     `silver_count` INT NOT NULL DEFAULT 0 COMMENT '银牌数',
@@ -357,7 +358,12 @@ SELECT
     css.bronze_count,
     css.individual_points,
     css.team_points,
-    RANK() OVER (ORDER BY css.total_points DESC) AS ranking
+    RANK() OVER (
+        ORDER BY css.total_points DESC,
+                 css.gold_count DESC,
+                 css.silver_count DESC,
+                 css.bronze_count DESC
+    ) AS ranking
 FROM as_college_score_summary css
 JOIN as_college c ON css.college_id = c.id
 WHERE css.deleted = 0 AND c.deleted = 0
