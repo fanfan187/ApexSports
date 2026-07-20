@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.fanfan.apexsports.mappers.CollegeScoreSummaryMapper">
+
+    <!--
+        学院排名模块自定义查询。
+
+        1. selectAllRankings / selectRankingByCollegeId 查 v_college_ranking 视图
+           - 视图列名为 snake_case（视图内部已 JOIN as_college 取 name/code）
+           - 通过 AS camelCase 别名对齐 com.fanfan.apexsports.vos.CollegeRankingVO 字段
+           - resultType 用全限定类名，不用 resultMap（VO 字段与别名一一对应即可）
+           - 视图内置 ORDER BY 不保证 SELECT 顺序，故 SQL 显式 ORDER BY ranking ASC
+           - 视图 WHERE 已过滤 css.deleted = 0 AND c.deleted = 0，无需再过滤
+
+        2. selectEventScoreDetails 5 表 LEFT JOIN 明细
+           - 5 表：as_score s / as_competition cp / as_event e / as_participation p / as_athlete a
+           - deleted = 0 全部置于 ON 子句，避免 LEFT JOIN 退化为 INNER JOIN
+             （团体成绩 s.participation_id 为 null，若 deleted 写到 WHERE 会让团体成绩行被过滤掉）
+           - 团体成绩 s.team_participation_id IS NOT NULL → eventType = '团体'，否则 '个人'
+           - 团体成绩 s.participation_id 为 null → LEFT JOIN 自然 a 为 null → athleteName 为 null（语义正确）
+           - rank 是 MySQL 关键字（窗口函数 RANK()），作为列名必须反引号转义：s.`rank`
+           - score 字段对齐 VO.score（String 显示文本）→ 取 as_score.score_display AS score
+           - medalType 不在 SQL 中 SELECT，MyBatis 自动置 null，由 Logic 层填充
+           - 学院过滤覆盖个人（as_athlete.college_id）与团体（as_score.college_id）两种归属路径
+           - ORDER BY s.points DESC（业务规则2：按积分降序）
+    -->
+
+    <!-- 全部学院排名列表（接口82），按 ranking ASC -->
+    <select id="selectAllRankings"
+            resultType="com.fanfan.apexsports.vos.CollegeRankingVO">
+        SELECT college_id        AS collegeId,
+               college_name      AS collegeName,
+               college_code      AS collegeCode,
+               total_points      AS totalPoints,
+               gold_count        AS goldCount,
+               silver_count      AS silverCount,
+               bronze_count      AS bronzeCount,
+               individual_points AS individualPoints,
+               team_points       AS teamPoints,
+               ranking           AS ranking
+        FROM v_college_ranking
+        ORDER BY ranking ASC
+    </select>
+
+    <!-- 单学院排名行（接口83 头部，cache-aside 回源），按 college_id 过滤 -->
+    <select id="selectRankingByCollegeId"
+            resultType="com.fanfan.apexsports.vos.CollegeRankingVO">
+        SELECT college_id        AS collegeId,
+               college_name      AS collegeName,
+               college_code      AS collegeCode,
+               total_points      AS totalPoints,
+               gold_count        AS goldCount,
+               silver_count      AS silverCount,
+               bronze_count      AS bronzeCount,
+               individual_points AS individualPoints,
+               team_points       AS teamPoints,
+               ranking           AS ranking
+        FROM v_college_ranking
+        WHERE college_id = #{collegeId}
+    </select>
+
+    <!-- 单学院积分明细列表（接口83 明细数组），5 表 LEFT JOIN，按 points DESC -->
+    <select id="selectEventScoreDetails"
+            resultType="com.fanfan.apexsports.vos.EventScoreDetailVO">
+        SELECT e.id    AS eventId,
+               e.name   AS eventName,
+               CASE WHEN s.team_participation_id IS NOT NULL
+                    THEN '团体' ELSE '个人' END AS eventType,
+               a.name   AS athleteName,
+               s.`rank` AS `rank`,
+               s.score_display AS score,
+               s.points AS points
+        FROM as_score s
+        LEFT JOIN as_competition  cp ON s.competition_id  = cp.id AND cp.deleted = 0
+        LEFT JOIN as_event         e ON cp.event_id        = e.id  AND e.deleted  = 0
+        LEFT JOIN as_participation p ON s.participation_id = p.id  AND p.deleted  = 0
+        LEFT JOIN as_athlete       a ON p.athlete_id       = a.id  AND a.deleted  = 0
+        WHERE s.deleted = 0
+          AND (s.college_id = #{collegeId} OR a.college_id = #{collegeId})
+        ORDER BY s.points DESC
+    </select>
+
+</mapper>
