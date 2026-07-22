@@ -149,3 +149,16 @@ INSERT INTO `as_record` (`event_id`, `record_type`, `athlete_name`, `college_nam
 ((SELECT id FROM as_event WHERE code = 'WSP'), 1, '郑丽', '体育学院', 10.23, '10.23米', '2024-05-18', '2024年春季运动会'),
 ((SELECT id FROM as_event WHERE code = 'M4X100R'), 1, NULL, '体育学院', 42.35, '42.35秒', '2024-05-19', '2024年春季运动会'),
 ((SELECT id FROM as_event WHERE code = 'W4X100R'), 1, NULL, '体育学院', 48.92, '48.92秒', '2024-05-19', '2024年春季运动会');
+
+-- =============================================
+-- 9. 比赛场次初始数据 (6个场次, 覆盖径赛/田赛/不同场地/不同时间段)
+-- status: 0-未开始, 1-进行中, 2-已结束
+-- 时间段互不重叠以避免种子内部冲突
+-- =============================================
+INSERT INTO `as_competition` (`event_id`, `venue_id`, `round`, `group_no`, `start_time`, `end_time`, `status`, `remark`) VALUES
+((SELECT id FROM as_event WHERE code = 'M100M'), (SELECT id FROM as_venue WHERE code = 'TRACK_A'), 1, 1, '2026-05-15 08:00:00', '2026-05-15 08:30:00', 2, '男子100米预赛第1组'),
+((SELECT id FROM as_event WHERE code = 'W100M'), (SELECT id FROM as_venue WHERE code = 'TRACK_A'), 1, 1, '2026-05-15 08:30:00', '2026-05-15 09:00:00', 2, '女子100米预赛第1组'),
+((SELECT id FROM as_event WHERE code = 'MHJ'), (SELECT id FROM as_venue WHERE code = 'HJ_AREA'), 2, 1, '2026-05-15 09:00:00', '2026-05-15 10:00:00', 2, '男子跳高决赛'),
+((SELECT id FROM as_event WHERE code = 'MSP'), (SELECT id FROM as_venue WHERE code = 'THROW_AREA'), 2, 1, '2026-05-15 09:00:00', '2026-05-15 10:00:00', 2, '男子铅球决赛'),
+((SELECT id FROM as_event WHERE code = 'M200M'), (SELECT id FROM as_venue WHERE code = 'TRACK_A'), 2, 1, '2026-05-15 10:00:00', '2026-05-15 10:30:00', 1, '男子200米决赛'),
+((SELECT id FROM as_event WHERE code = 'M4X100R'), (SELECT id FROM as_venue WHERE code = 'MAIN_STADIUM'), 2, 1, '2026-05-15 14:00:00', '2026-05-15 14:30:00', 0, '男子4×100米接力决赛');

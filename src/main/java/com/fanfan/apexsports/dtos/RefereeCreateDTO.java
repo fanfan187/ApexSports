@@ -4,6 +4,7 @@ import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import lombok.AllArgsConstructor;
 import lombok.Data;
@@ -35,6 +36,7 @@ public class RefereeCreateDTO {
     private Integer gender;
 
     @Size(max = 20, message = "电话长度不能超过20个字符")
+    @Pattern(regexp = "^$|^1[3-9]\\d{9}$", message = "电话格式不正确，需为11位手机号")
     private String phone;
 
     @Size(max = 30, message = "裁判等级长度不能超过30个字符")

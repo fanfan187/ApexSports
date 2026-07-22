@@ -1,5 +1,6 @@
 package com.fanfan.apexsports.dtos;
 
+import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
@@ -38,5 +39,6 @@ public class VenueCreateDTO {
     @Size(max = 200, message = "位置描述最多200个字符")
     private String location;
 
+    @Min(value = 0, message = "容纳人数不能为负数")
     private Integer capacity;
 }

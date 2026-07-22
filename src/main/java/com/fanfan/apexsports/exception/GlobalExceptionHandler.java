@@ -4,6 +4,7 @@ import com.fanfan.apexsports.common.result.Result;
 import jakarta.validation.ConstraintViolationException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -75,6 +76,23 @@ public class GlobalExceptionHandler {
     public Result<Void> handleConstraintViolationException(ConstraintViolationException e) {
         log.warn("参数校验失败: {}", e.getMessage());
         return Result.error(ErrorCode.PARAM_VALIDATION_FAILED.getCode(), e.getMessage());
+    }
+
+    /**
+     * 处理请求体反序列化异常
+     * <p>
+     * 捕获 Jackson 反序列化失败（如 JSON 格式错误、类型不匹配、BigDecimal 解析非法字符串等），
+     * 返回 40001 参数校验失败，避免走兜底 50000 系统内部错误
+     * </p>
+     *
+     * @param e 请求体不可读异常
+     * @return 错误响应
+     */
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    @ResponseStatus(HttpStatus.BAD_REQUEST)
+    public Result<Void> handleHttpMessageNotReadableException(HttpMessageNotReadableException e) {
+        log.warn("请求体反序列化失败: {}", e.getMessage());
+        return Result.error(ErrorCode.PARAM_VALIDATION_FAILED.getCode(), "请求体格式错误或字段类型不匹配");
     }
 
     /**

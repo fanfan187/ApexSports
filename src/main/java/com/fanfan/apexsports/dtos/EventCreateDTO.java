@@ -1,5 +1,7 @@
 package com.fanfan.apexsports.dtos;
 
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
@@ -31,6 +33,8 @@ public class EventCreateDTO {
     private String code;
 
     @NotNull(message = "项目类型不能为空")
+    @Min(value = 1, message = "项目类型必须为1（个人）或2（集体）")
+    @Max(value = 2, message = "项目类型必须为1（个人）或2（集体）")
     private Integer type;
 
     @NotNull(message = "项目类别不能为空")
