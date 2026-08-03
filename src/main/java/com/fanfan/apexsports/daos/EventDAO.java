@@ -13,6 +13,7 @@ import com.fanfan.apexsports.mappers.EventMapper;
 import com.fanfan.apexsports.mappers.ParticipationMapper;
 import com.fanfan.apexsports.mappers.RecordMapper;
 import com.fanfan.apexsports.mappers.TeamParticipationMapper;
+import com.fanfan.apexsports.utils.CacheEvictionUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -43,6 +44,8 @@ import java.util.List;
  * <p>
  * <b>缓存策略：</b>读操作采用 cache-aside 模式（先查缓存→未命中查库→回写缓存），
  * 写操作（增/改/删）驱逐相关缓存保证一致性。协调 {@link EventCache} 与 {@link EventMapper}。
+ * 写路径的缓存写入/驱逐经 {@link CacheEvictionUtil#evictAfterCommit} 推迟到事务提交后执行，
+ * 避免「事务未提交先驱逐/回写 → 并发读回源旧数据回填缓存或事务回滚残留脏缓存」的竞态。
  * 唯一性校验和引用检查方法不经过缓存，始终直查数据库以保证实时性。
  * </p>
  *
@@ -301,9 +304,12 @@ public class EventDAO {
         eventMapper.insert(event);
         // 从数据库重新提取，确保字段完整
         Event inserted = eventMapper.selectById(event.getId());
-        // 写操作：驱逐该实体的单条缓存（新数据需回写）+ 所有列表缓存（列表结果可能变化）
-        eventCache.cacheEvent(inserted);   // 主动缓存新插入的实体
-        eventCache.evictAllEventLists();   // 驱逐所有列表（新增项目会影响列表结果）
+        // 写操作：缓存新实体 + 驱逐所有列表缓存（事务提交后执行，
+        // 避免事务回滚后缓存残留幻影实体、或并发读回填旧列表）
+        CacheEvictionUtil.evictAfterCommit(() -> {
+            eventCache.cacheEvent(inserted);   // 主动缓存新插入的实体
+            eventCache.evictAllEventLists();   // 驱逐所有列表（新增项目会影响列表结果）
+        });
         return inserted;
     }
 
@@ -317,11 +323,15 @@ public class EventDAO {
         event.setUpdatedAt(LocalDateTime.now());
         eventMapper.updateById(event);
         Event updated = eventMapper.selectById(event.getId());
-        // 写操作：驱逐单条缓存（数据已变，下次读会回源）+ 所有列表缓存（过滤结果可能变化）
+        // 写操作：驱逐单条缓存（数据已变，下次读会回源）+ 所有列表缓存（过滤结果可能变化），
+        // 事务提交后执行，避免并发读回填旧数据。
         // 注意：选择驱逐而非更新单条缓存——updateById 只改部分字段，
         //       重新查的 entity 可能与缓存里的字段不同，驱逐让下次读回源更安全。
-        eventCache.evictEvent(event.getId());
-        eventCache.evictAllEventLists();
+        Long eventId = event.getId();
+        CacheEvictionUtil.evictAfterCommit(() -> {
+            eventCache.evictEvent(eventId);
+            eventCache.evictAllEventLists();
+        });
         return updated;
     }
 
@@ -332,8 +342,10 @@ public class EventDAO {
      */
     public void deleteById(Long id) {
         eventMapper.deleteById(id);
-        // 写操作：驱逐单条缓存 + 所有列表缓存
-        eventCache.evictEvent(id);
-        eventCache.evictAllEventLists();
+        // 写操作：驱逐单条缓存 + 所有列表缓存（事务提交后执行，避免并发读回填旧数据）
+        CacheEvictionUtil.evictAfterCommit(() -> {
+            eventCache.evictEvent(id);
+            eventCache.evictAllEventLists();
+        });
     }
 }

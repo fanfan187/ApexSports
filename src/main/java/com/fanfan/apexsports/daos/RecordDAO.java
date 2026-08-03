@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fanfan.apexsports.cache.RecordCache;
 import com.fanfan.apexsports.entities.Record;
 import com.fanfan.apexsports.mappers.RecordMapper;
+import com.fanfan.apexsports.utils.CacheEvictionUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -26,8 +27,10 @@ import java.util.List;
  *       「最优」方向由调用方（成绩模块 Logic）通过 {@code direction} 参数传入，
  *       径赛取 score 升序首条（越小越优），田赛取 score 降序首条（越大越优），
  *       避免本 DAO 依赖 {@code EventDAO} 反向耦合 Event.category。</li>
- *   <li>写操作（{@link #insertRecord} / {@link #invalidateRecord}）统一驱逐
- *       该 eventId + recordType 维度的缓存，保证下次查询回源取最新最优。</li>
+ *   <li>写操作（{@link #insertRecord} / {@link #invalidateRecord} / {@link #updateSelective}）
+ *       统一驱逐该 eventId + recordType 维度的缓存，保证下次查询回源取最新最优。
+ *       驱逐经 {@link CacheEvictionUtil#evictAfterCommit} 推迟到事务提交后执行，
+ *       避免「事务未提交先驱逐 → 并发读回源旧数据回填缓存」的竞态。</li>
  * </ul>
  * </p>
  * <p>
@@ -160,8 +163,10 @@ public class RecordDAO {
         record.setUpdatedAt(LocalDateTime.now());
         recordMapper.insert(record);
         Record inserted = recordMapper.selectById(record.getId());
-        // 写操作：驱逐该 eventId + recordType 维度的最优缓存
-        recordCache.evict(record.getEventId(), record.getRecordType());
+        // 写操作：驱逐该 eventId + recordType 维度的最优缓存（事务提交后执行）
+        Long eventId = record.getEventId();
+        Integer recordType = record.getRecordType();
+        CacheEvictionUtil.evictAfterCommit(() -> recordCache.evict(eventId, recordType));
         return inserted;
     }
 
@@ -185,8 +190,10 @@ public class RecordDAO {
         patch.setStatus(STATUS_INVALID);
         patch.setUpdatedAt(LocalDateTime.now());
         recordMapper.updateById(patch);
-        // 写操作：驱逐该 eventId + recordType 维度的最优缓存
-        recordCache.evict(existing.getEventId(), existing.getRecordType());
+        // 写操作：驱逐该 eventId + recordType 维度的最优缓存（事务提交后执行）
+        Long eventId = existing.getEventId();
+        Integer recordType = existing.getRecordType();
+        CacheEvictionUtil.evictAfterCommit(() -> recordCache.evict(eventId, recordType));
     }
 
     /**
@@ -217,12 +224,16 @@ public class RecordDAO {
         patch.setId(id);
         patch.setUpdatedAt(LocalDateTime.now());
         recordMapper.updateById(patch);
-        // Step 3: 驱逐缓存 —— old 维度必驱
-        recordCache.evict(existing.getEventId(), existing.getRecordType());
+        // Step 3: 驱逐缓存（事务提交后执行）—— old 维度必驱；
         // 若 recordType 变更，新维度的最优缓存也可能受影响，一并驱逐
-        if (patch.getRecordType() != null
-                && !patch.getRecordType().equals(existing.getRecordType())) {
-            recordCache.evict(existing.getEventId(), patch.getRecordType());
-        }
+        Long eventId = existing.getEventId();
+        Integer oldRecordType = existing.getRecordType();
+        Integer newRecordType = patch.getRecordType();
+        CacheEvictionUtil.evictAfterCommit(() -> {
+            recordCache.evict(eventId, oldRecordType);
+            if (newRecordType != null && !newRecordType.equals(oldRecordType)) {
+                recordCache.evict(eventId, newRecordType);
+            }
+        });
     }
 }

@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fanfan.apexsports.cache.CollegeScoreSummaryCache;
 import com.fanfan.apexsports.entities.CollegeScoreSummary;
 import com.fanfan.apexsports.mappers.CollegeScoreSummaryMapper;
+import com.fanfan.apexsports.utils.CacheEvictionUtil;
 import com.fanfan.apexsports.vos.CollegeRankingVO;
 import com.fanfan.apexsports.vos.EventScoreDetailVO;
 import lombok.RequiredArgsConstructor;
@@ -25,14 +26,19 @@ import java.util.List;
  * <p>
  * <b>方法语义：</b>
  * <ul>
- *   <li>{@link #upsertIncrement}：不存在则插入全0 + delta 的合并结果；存在则按字段累加。</li>
- *   <li>{@link #rollbackIncrement}：仅对已存在记录按 delta 反向减回；不存在则记 warn 跳过。</li>
+ *   <li>{@link #upsertIncrement}：不存在则插入全0 + delta 的合并结果；存在则按字段累加。
+ *       写入后驱逐全部排名缓存（单学院积分变更会影响总榜名次排序）。</li>
+ *   <li>{@link #rollbackIncrement}：仅对已存在记录按 delta 反向减回；不存在则记 warn 跳过。
+ *       写入后驱逐全部排名缓存。</li>
  *   <li>{@link #findAllRankings} / {@link #findRankingByCollegeId}：cache-aside 读路径，未命中回源查
  *       {@code v_college_ranking} 视图并回填缓存。</li>
  *   <li>{@link #findEventScoreDetails}：单学院成绩明细，无缓存（明细数据量小且变更频繁，直接查库）。</li>
  *   <li>{@link #fullRecalculate}：@Transactional 原子流程，物理清空 + 聚合 INSERT + 统计，
  *       返回 {@link FullRecalcResult} 供 Logic 组装刷新结果 VO。</li>
  * </ul>
+ * 增量写路径的缓存驱逐经 {@link CacheEvictionUtil#evictAfterCommit} 推迟到事务提交后执行，
+ * 避免「事务未提交先驱逐 → 并发读回源旧数据回填缓存」的竞态
+ * （增量写由成绩模块 Logic 在类级事务内调用，驱逐必须对齐事务提交边界）。
  * </p>
  * <p>
  * <b>红线遵守：</b>DAO 层不直接操作底层缓存中间件（通过 {@link CollegeScoreSummaryCache}）、
@@ -117,22 +123,24 @@ public class CollegeScoreSummaryDAO {
                     .setCreatedAt(now)
                     .setUpdatedAt(now);
             collegeScoreSummaryMapper.insert(fresh);
-            return;
+        } else {
+            // 存在：按字段累加
+            existing.setTotalPoints(zeroIfNull(existing.getTotalPoints()).add(safeDelta))
+                    .setIndividualPoints(isTeam
+                            ? zeroIfNull(existing.getIndividualPoints())
+                            : zeroIfNull(existing.getIndividualPoints()).add(safeDelta))
+                    .setTeamPoints(isTeam
+                            ? zeroIfNull(existing.getTeamPoints()).add(safeDelta)
+                            : zeroIfNull(existing.getTeamPoints()))
+                    .setGoldCount(zeroIfNullInt(existing.getGoldCount()) + deltaGold)
+                    .setSilverCount(zeroIfNullInt(existing.getSilverCount()) + deltaSilver)
+                    .setBronzeCount(zeroIfNullInt(existing.getBronzeCount()) + deltaBronze)
+                    .setUpdatedAt(now);
+            collegeScoreSummaryMapper.updateById(existing);
         }
-
-        // 存在：按字段累加
-        existing.setTotalPoints(zeroIfNull(existing.getTotalPoints()).add(safeDelta))
-                .setIndividualPoints(isTeam
-                        ? zeroIfNull(existing.getIndividualPoints())
-                        : zeroIfNull(existing.getIndividualPoints()).add(safeDelta))
-                .setTeamPoints(isTeam
-                        ? zeroIfNull(existing.getTeamPoints()).add(safeDelta)
-                        : zeroIfNull(existing.getTeamPoints()))
-                .setGoldCount(zeroIfNullInt(existing.getGoldCount()) + deltaGold)
-                .setSilverCount(zeroIfNullInt(existing.getSilverCount()) + deltaSilver)
-                .setBronzeCount(zeroIfNullInt(existing.getBronzeCount()) + deltaBronze)
-                .setUpdatedAt(now);
-        collegeScoreSummaryMapper.updateById(existing);
+        // 写操作：驱逐全部排名缓存（列表 + 单学院行——单学院积分变更会影响总榜名次排序），
+        // 事务提交后执行，避免并发读在提交前回填旧排名
+        CacheEvictionUtil.evictAfterCommit(cache::evictAll);
     }
 
     /**
@@ -171,6 +179,8 @@ public class CollegeScoreSummaryDAO {
                 .setBronzeCount(zeroIfNullInt(existing.getBronzeCount()) - deltaBronze)
                 .setUpdatedAt(now);
         collegeScoreSummaryMapper.updateById(existing);
+        // 写操作：驱逐全部排名缓存（事务提交后执行，避免并发读在提交前回填旧排名）
+        CacheEvictionUtil.evictAfterCommit(cache::evictAll);
     }
 
     // ==================== 内部工具 ====================

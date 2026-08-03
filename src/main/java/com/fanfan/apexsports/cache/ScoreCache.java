@@ -67,8 +67,9 @@ public class ScoreCache {
     /**
      * 成绩分页结果缓存 Key 前缀，完整格式：{@code score:list:{keySuffix}}。
      * <p>
-     * keySuffix 由调用方（DAO）按分页参数与过滤条件拼装，如 {@code "1_10_5"}
-     * 表示 page=1、size=10、competitionId=5（as_score 无 event_id 列，仅按场次过滤）。
+     * keySuffix 由调用方（DAO）按分页参数与过滤条件拼装，如 {@code "1_10_5_null"}
+     * 表示 page=1、size=10、competitionId=5、eventId=null
+     * （as_score 无 event_id 列，项目维度经连表 as_competition.event_id 过滤）。
      * </p>
      */
     private static final String LIST_KEY_PREFIX = "score:list:";

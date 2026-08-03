@@ -34,14 +34,17 @@ public interface ScoreMapper extends BaseMapper<Score> {
      * 分页由 MyBatis-Plus 插件注入，xml 中不写 LIMIT。
      * </p>
      * <p>
-     * 项目维度过滤由 competitionId 隐含承载（as_score 表无 event_id 列，
-     * eventName 通过 as_competition.event_id JOIN as_event 获取）。
+     * competitionId / eventId 均为可选过滤：as_score 表无 event_id 列，
+     * 场次过滤直接按 {@code s.competition_id}，项目过滤经连表按
+     * {@code cp.event_id}（as_competition.event_id）实现。
      * </p>
      *
      * @param page          分页参数（由调用方 new Page）
      * @param competitionId 比赛场次ID(nullable 可选过滤)
+     * @param eventId       项目ID(nullable 可选过滤，经 as_competition.event_id 连表过滤)
      * @return 每行 ScoreDetailVO
      */
     IPage<ScoreDetailVO> findByPage(IPage<ScoreDetailVO> page,
-                                    @Param("competitionId") Long competitionId);
+                                    @Param("competitionId") Long competitionId,
+                                    @Param("eventId") Long eventId);
 }

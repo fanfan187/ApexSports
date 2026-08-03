@@ -7,6 +7,7 @@ import com.fanfan.apexsports.cache.ScoreCache;
 import com.fanfan.apexsports.dtos.ScoreQueryDTO;
 import com.fanfan.apexsports.entities.Score;
 import com.fanfan.apexsports.mappers.ScoreMapper;
+import com.fanfan.apexsports.utils.CacheEvictionUtil;
 import com.fanfan.apexsports.vos.ScoreDetailVO;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -28,7 +29,8 @@ import java.util.List;
  *   <li>{@link #findByPage} 委托 {@link ScoreMapper#findByPage} 执行 5 表 LEFT JOIN 分页，
  *       返回 {@link ScoreDetailVO}（含 athleteName/collegeName/eventName/competitionName 连表名称）。
  *       分页参数 page/size 缺省由本方法补齐为 1/10。读操作采用 cache-aside：
- *       缓存整个 {@code Page}（records + total），keySuffix 按 {@code {page}_{size}_{competitionId}} 拼装。</li>
+ *       缓存整个 {@code Page}（records + total），keySuffix 按
+ *       {@code {page}_{size}_{competitionId}_{eventId}} 拼装（eventId 为项目维度过滤）。</li>
  *   <li>{@link #findByCompetitionId} 用 {@link LambdaQueryWrapper} 单表查询指定场次下的成绩列表，
  *       返回 {@link Score} 实体（不做 DO→VO 转换，转换在 Logic 层）。同样采用 cache-aside。
  *       注意：Logic 层对返回列表的原地排序是安全的——缓存命中时每次反序列化都会产生全新 list，
@@ -38,7 +40,9 @@ import java.util.List;
  *   <li>{@link #existsByCompetitionId} 用于场次删除前的成绩存在性校验。
  *       唯一性/存在性校验方法不经过缓存，始终直查数据库以保证实时性（与 EventDAO 一致）。</li>
  *   <li>写操作（增/改/删）统一驱逐全部列表缓存与对应 competitionId 维度的聚合缓存，
- *       因为任意成绩变更都可能影响分页列表与该场次聚合结果。</li>
+ *       因为任意成绩变更都可能影响分页列表与该场次聚合结果。驱逐经
+ *       {@link CacheEvictionUtil#evictAfterCommit} 推迟到事务提交后执行，
+ *       避免「事务未提交先驱逐 → 并发读回源旧数据回填缓存」的竞态。</li>
  *   <li>{@link #deleteById} 先 selectById 拿到 competitionId 再删除，避免驱逐维度缺失。</li>
  * </ul>
  * </p>
@@ -90,20 +94,22 @@ public class ScoreDAO {
      * 成绩明细连表分页查询（5 表 LEFT JOIN，返回 ScoreDetailVO）。
      * <p>
      * 委托 {@link ScoreMapper#findByPage} 执行分页，分页参数 page/size 缺省补齐为 1/10。
-     * 可按 competitionId 过滤（as_score 表无 event_id 列，项目维度由 competitionId 隐含承载）。
+     * competitionId / eventId 均可选过滤：场次按 {@code s.competition_id} 直滤；
+     * 项目按连表 {@code cp.event_id} 过滤（as_score 表无 event_id 列，项目维度由场次承载）。
      * </p>
      * <p>
-     * cache-aside：先按 {@code {page}_{size}_{competitionId}} 查分页缓存，命中直返；
+     * cache-aside：先按 {@code {page}_{size}_{competitionId}_{eventId}} 查分页缓存，命中直返；
      * 未命中回源查库后将整个 {@link Page}（records + total）回写缓存。
+     * keySuffix 含 eventId 维度，保证不同项目过滤条件的分页结果各自独立缓存。
      * </p>
      *
-     * @param query 查询条件（competitionId/page/size 均可选）
+     * @param query 查询条件（competitionId/eventId/page/size 均可选）
      * @return 分页结果，每行为 {@link ScoreDetailVO}
      */
     public IPage<ScoreDetailVO> findByPage(ScoreQueryDTO query) {
         int pageNum = (query.getPage() == null || query.getPage() < 1) ? DEFAULT_PAGE : query.getPage();
         int pageSize = (query.getSize() == null || query.getSize() < 1) ? DEFAULT_SIZE : query.getSize();
-        String keySuffix = buildPageKeySuffix(pageNum, pageSize, query.getCompetitionId());
+        String keySuffix = buildPageKeySuffix(pageNum, pageSize, query.getCompetitionId(), query.getEventId());
         // 1. 先查分页缓存
         Page<ScoreDetailVO> cached = scoreCache.getPage(keySuffix);
         if (cached != null) {
@@ -111,26 +117,27 @@ public class ScoreDAO {
         }
         // 2. 缓存未命中，查数据库（分页插件回填 records/total 到传入的 Page 对象）
         Page<ScoreDetailVO> page = new Page<>(pageNum, pageSize);
-        IPage<ScoreDetailVO> result = scoreMapper.findByPage(page, query.getCompetitionId());
+        IPage<ScoreDetailVO> result = scoreMapper.findByPage(page, query.getCompetitionId(), query.getEventId());
         // 3. 回写缓存（含 total，命中后可完整还原分页语义）
         scoreCache.cachePage(keySuffix, page);
         return result;
     }
 
     /**
-     * 生成分页缓存的 keySuffix 签名：{@code {page}_{size}_{competitionId}}。
+     * 生成分页缓存的 keySuffix 签名：{@code {page}_{size}_{competitionId}_{eventId}}。
      * <p>
-     * competitionId 可为 null（不过滤），此时签名如 {@code "1_10_null"}，
+     * competitionId / eventId 可为 null（不过滤），此时签名如 {@code "1_10_null_null"}，
      * 与 EventDAO 的 filterKey 风格一致。
      * </p>
      *
      * @param pageNum       页码（已归一化）
      * @param pageSize      每页条数（已归一化）
      * @param competitionId 场次ID，可为 null
-     * @return 缓存键后缀，例如 {@code "1_10_5"}
+     * @param eventId       项目ID，可为 null
+     * @return 缓存键后缀，例如 {@code "1_10_5_null"}
      */
-    private String buildPageKeySuffix(int pageNum, int pageSize, Long competitionId) {
-        return pageNum + "_" + pageSize + "_" + competitionId;
+    private String buildPageKeySuffix(int pageNum, int pageSize, Long competitionId, Long eventId) {
+        return pageNum + "_" + pageSize + "_" + competitionId + "_" + eventId;
     }
 
     /**
@@ -221,11 +228,14 @@ public class ScoreDAO {
         score.setUpdatedAt(LocalDateTime.now());
         scoreMapper.insert(score);
         Score inserted = scoreMapper.selectById(score.getId());
-        // 写操作：驱逐全部列表缓存与该场次维度的聚合缓存
-        scoreCache.evictList();
-        if (score.getCompetitionId() != null) {
-            scoreCache.evictCompetition(score.getCompetitionId());
-        }
+        // 写操作：驱逐全部列表缓存与该场次维度的聚合缓存（事务提交后执行，避免并发读回填旧数据）
+        Long competitionId = score.getCompetitionId();
+        CacheEvictionUtil.evictAfterCommit(() -> {
+            scoreCache.evictList();
+            if (competitionId != null) {
+                scoreCache.evictCompetition(competitionId);
+            }
+        });
         return inserted;
     }
 
@@ -239,12 +249,16 @@ public class ScoreDAO {
         score.setUpdatedAt(LocalDateTime.now());
         scoreMapper.updateById(score);
         Score updated = scoreMapper.selectById(score.getId());
-        scoreCache.evictList();
-        if (updated != null && updated.getCompetitionId() != null) {
-            scoreCache.evictCompetition(updated.getCompetitionId());
-        } else if (score.getCompetitionId() != null) {
-            scoreCache.evictCompetition(score.getCompetitionId());
-        }
+        // 写操作：驱逐全部列表缓存与该场次维度的聚合缓存（事务提交后执行，避免并发读回填旧数据）
+        Long competitionId = (updated != null && updated.getCompetitionId() != null)
+                ? updated.getCompetitionId()
+                : score.getCompetitionId();
+        CacheEvictionUtil.evictAfterCommit(() -> {
+            scoreCache.evictList();
+            if (competitionId != null) {
+                scoreCache.evictCompetition(competitionId);
+            }
+        });
         return updated;
     }
 
@@ -263,9 +277,13 @@ public class ScoreDAO {
             return;
         }
         scoreMapper.deleteById(id);
-        scoreCache.evictList();
-        if (existing.getCompetitionId() != null) {
-            scoreCache.evictCompetition(existing.getCompetitionId());
-        }
+        // 写操作：驱逐全部列表缓存与该场次维度的聚合缓存（事务提交后执行，避免并发读回填旧数据）
+        Long competitionId = existing.getCompetitionId();
+        CacheEvictionUtil.evictAfterCommit(() -> {
+            scoreCache.evictList();
+            if (competitionId != null) {
+                scoreCache.evictCompetition(competitionId);
+            }
+        });
     }
 }

@@ -21,6 +21,7 @@ import com.fanfan.apexsports.mappers.RefereeAssignmentMapper;
 import com.fanfan.apexsports.mappers.RefereeMapper;
 import com.fanfan.apexsports.mappers.TeamParticipationMapper;
 import com.fanfan.apexsports.mappers.VenueMapper;
+import com.fanfan.apexsports.utils.CacheEvictionUtil;
 import com.fanfan.apexsports.vos.ScheduleBookletVO;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -58,7 +59,9 @@ import java.util.stream.Collectors;
  *       未命中则批量查询场次/项目/场地/裁判/参赛人数，组装 {@link ScheduleBookletVO} 列表后回写缓存。
  *       聚合 VO 构建在 DAO 完成（属于缓存聚合结果，非单条 DO 转换）。
  *       跨表聚合（参赛人数 GROUP BY、主裁判姓名）通过 CompetitionMapper XML 方法或两步查询实现。</li>
- *   <li>写操作（增/改/删/状态变更）统一驱逐所有秩序册缓存，因为任意赛程变更都可能影响任意日期的聚合结果。</li>
+ *   <li>写操作（增/改/删/状态变更）统一驱逐所有秩序册缓存，因为任意赛程变更都可能影响任意日期的聚合结果。
+ *       驱逐经 {@link CacheEvictionUtil#evictAfterCommit} 推迟到事务提交后执行，
+ *       避免「事务未提交先驱逐 → 并发读回源旧数据回填缓存」的竞态。</li>
  * </ul>
  * </p>
  * <p>
@@ -444,8 +447,8 @@ public class CompetitionDAO {
         }
         competitionMapper.insert(competition);
         Competition inserted = competitionMapper.selectById(competition.getId());
-        // 写操作：驱逐所有秩序册缓存（赛程变更影响任意日期聚合结果）
-        competitionCache.evictAllBooklets();
+        // 写操作：驱逐所有秩序册缓存（赛程变更影响任意日期聚合结果，事务提交后执行）
+        CacheEvictionUtil.evictAfterCommit(() -> competitionCache.evictAllBooklets());
         return inserted;
     }
 
@@ -459,7 +462,8 @@ public class CompetitionDAO {
         competition.setUpdatedAt(LocalDateTime.now());
         competitionMapper.updateById(competition);
         Competition updated = competitionMapper.selectById(competition.getId());
-        competitionCache.evictAllBooklets();
+        // 写操作：驱逐所有秩序册缓存（事务提交后执行）
+        CacheEvictionUtil.evictAfterCommit(() -> competitionCache.evictAllBooklets());
         return updated;
     }
 
@@ -470,7 +474,8 @@ public class CompetitionDAO {
      */
     public void deleteById(Long id) {
         competitionMapper.deleteById(id);
-        competitionCache.evictAllBooklets();
+        // 写操作：驱逐所有秩序册缓存（事务提交后执行）
+        CacheEvictionUtil.evictAfterCommit(() -> competitionCache.evictAllBooklets());
     }
 
     /**
@@ -485,7 +490,8 @@ public class CompetitionDAO {
         patch.setStatus(status);
         patch.setUpdatedAt(LocalDateTime.now());
         competitionMapper.updateById(patch);
-        competitionCache.evictAllBooklets();
+        // 写操作：驱逐所有秩序册缓存（事务提交后执行）
+        CacheEvictionUtil.evictAfterCommit(() -> competitionCache.evictAllBooklets());
     }
 
     // ==================== 秩序册聚合缓存（cache-aside） ====================
@@ -527,11 +533,14 @@ public class CompetitionDAO {
      * 驱逐所有秩序册缓存。
      * <p>
      * 委托 {@link CompetitionCache#evictAllBooklets()}，供 Logic 层在跨模块写操作
-     * （如参赛队变更、裁判指派）后手动驱逐缓存。
+     * （如参赛队变更、裁判指派）后手动驱逐缓存。驱逐经
+     * {@link CacheEvictionUtil#evictAfterCommit} 推迟到事务提交后执行，
+     * 与调用方 Logic 的 {@code @Transactional} 边界对齐，避免事务未提交先驱逐
+     * 导致并发读回填旧数据。
      * </p>
      */
     public void evictAllBooklets() {
-        competitionCache.evictAllBooklets();
+        CacheEvictionUtil.evictAfterCommit(() -> competitionCache.evictAllBooklets());
     }
 
     // ==================== 秩序册聚合内部构建 ====================
