@@ -423,7 +423,7 @@ public class CompetitionLogic implements CompetitionService {
     /**
      * {@inheritDoc}
      * <p>
-     * 校验链：管理员权限 → 场次存在 → 进行中(1)拦截 → 成绩校验占位（TODO）→
+     * 校验链：管理员权限 → 场次存在 → 已结束/已取消拦截 → 进行中(1)拦截 → 成绩存在拦截 →
      * 级联清理裁判分配与器材归还 → 删除场次。
      * </p>
      */
@@ -446,7 +446,8 @@ public class CompetitionLogic implements CompetitionService {
         }
 
         // 成绩校验：该场次下已录入成绩则禁止删除，避免成绩孤立
-        if (!scoreDAO.findByCompetitionId(id).isEmpty()) {
+        // 不走缓存的 count 直查，保证删除校验实时性（与 EventDAO 红线一致）
+        if (scoreDAO.existsByCompetitionId(id)) {
             throw new BusinessException(ErrorCode.SCORE_ALREADY_EXISTS);
         }
 

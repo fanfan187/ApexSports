@@ -27,15 +27,25 @@ import java.util.List;
  * <ul>
  *   <li>{@link #findByPage} 委托 {@link ScoreMapper#findByPage} 执行 5 表 LEFT JOIN 分页，
  *       返回 {@link ScoreDetailVO}（含 athleteName/collegeName/eventName/competitionName 连表名称）。
- *       分页参数 page/size 缺省由本方法补齐为 1/10。</li>
+ *       分页参数 page/size 缺省由本方法补齐为 1/10。读操作采用 cache-aside：
+ *       缓存整个 {@code Page}（records + total），keySuffix 按 {@code {page}_{size}_{competitionId}} 拼装。</li>
  *   <li>{@link #findByCompetitionId} 用 {@link LambdaQueryWrapper} 单表查询指定场次下的成绩列表，
- *       返回 {@link Score} 实体（不做 DO→VO 转换，转换在 Logic 层）。</li>
+ *       返回 {@link Score} 实体（不做 DO→VO 转换，转换在 Logic 层）。同样采用 cache-aside。
+ *       注意：Logic 层对返回列表的原地排序是安全的——缓存命中时每次反序列化都会产生全新 list，
+ *       不存在共享引用污染缓存的问题。</li>
  *   <li>{@link #existsByParticipationId} / {@link #existsByTeamParticipationId} 用于成绩录入前的
  *       唯一性校验（个人/团体成绩是否已录入），返回 count > 0。</li>
+ *   <li>{@link #existsByCompetitionId} 用于场次删除前的成绩存在性校验。
+ *       唯一性/存在性校验方法不经过缓存，始终直查数据库以保证实时性（与 EventDAO 一致）。</li>
  *   <li>写操作（增/改/删）统一驱逐全部列表缓存与对应 competitionId 维度的聚合缓存，
  *       因为任意成绩变更都可能影响分页列表与该场次聚合结果。</li>
  *   <li>{@link #deleteById} 先 selectById 拿到 competitionId 再删除，避免驱逐维度缺失。</li>
  * </ul>
+ * </p>
+ * <p>
+ * <b>缓存策略：</b>读操作采用 cache-aside 模式（先查缓存→未命中查库→回写缓存），
+ * 写操作（增/改/删）驱逐相关缓存保证一致性，协调 {@link ScoreCache} 与 {@link ScoreMapper}。
+ * 唯一性校验和存在性检查方法不经过缓存，始终直查数据库以保证实时性。
  * </p>
  * <p>
  * <b>红线遵守：</b>DAO 层不直接操作缓存（通过 {@link ScoreCache}）、不做业务校验
@@ -82,6 +92,10 @@ public class ScoreDAO {
      * 委托 {@link ScoreMapper#findByPage} 执行分页，分页参数 page/size 缺省补齐为 1/10。
      * 可按 competitionId 过滤（as_score 表无 event_id 列，项目维度由 competitionId 隐含承载）。
      * </p>
+     * <p>
+     * cache-aside：先按 {@code {page}_{size}_{competitionId}} 查分页缓存，命中直返；
+     * 未命中回源查库后将整个 {@link Page}（records + total）回写缓存。
+     * </p>
      *
      * @param query 查询条件（competitionId/page/size 均可选）
      * @return 分页结果，每行为 {@link ScoreDetailVO}
@@ -89,8 +103,34 @@ public class ScoreDAO {
     public IPage<ScoreDetailVO> findByPage(ScoreQueryDTO query) {
         int pageNum = (query.getPage() == null || query.getPage() < 1) ? DEFAULT_PAGE : query.getPage();
         int pageSize = (query.getSize() == null || query.getSize() < 1) ? DEFAULT_SIZE : query.getSize();
+        String keySuffix = buildPageKeySuffix(pageNum, pageSize, query.getCompetitionId());
+        // 1. 先查分页缓存
+        Page<ScoreDetailVO> cached = scoreCache.getPage(keySuffix);
+        if (cached != null) {
+            return cached;
+        }
+        // 2. 缓存未命中，查数据库（分页插件回填 records/total 到传入的 Page 对象）
         Page<ScoreDetailVO> page = new Page<>(pageNum, pageSize);
-        return scoreMapper.findByPage(page, query.getCompetitionId());
+        IPage<ScoreDetailVO> result = scoreMapper.findByPage(page, query.getCompetitionId());
+        // 3. 回写缓存（含 total，命中后可完整还原分页语义）
+        scoreCache.cachePage(keySuffix, page);
+        return result;
+    }
+
+    /**
+     * 生成分页缓存的 keySuffix 签名：{@code {page}_{size}_{competitionId}}。
+     * <p>
+     * competitionId 可为 null（不过滤），此时签名如 {@code "1_10_null"}，
+     * 与 EventDAO 的 filterKey 风格一致。
+     * </p>
+     *
+     * @param pageNum       页码（已归一化）
+     * @param pageSize      每页条数（已归一化）
+     * @param competitionId 场次ID，可为 null
+     * @return 缓存键后缀，例如 {@code "1_10_5"}
+     */
+    private String buildPageKeySuffix(int pageNum, int pageSize, Long competitionId) {
+        return pageNum + "_" + pageSize + "_" + competitionId;
     }
 
     /**
@@ -99,15 +139,44 @@ public class ScoreDAO {
      * 返回 {@link Score} 实体列表，不做 DO→VO 转换（转换在 Logic 层）。
      * MyBatis-Plus 的 {@code @TableLogic} 会自动追加 {@code deleted = 0} 条件。
      * </p>
+     * <p>
+     * cache-aside：先查场次维度缓存，命中直返；未命中回源查库后回写缓存。
+     * 调用方对返回列表的原地排序是安全的——缓存命中时每次反序列化都会产生全新 list。
+     * </p>
      *
      * @param competitionId 场次ID
      * @return 该场次下的成绩列表，无记录返回空列表
      */
     public List<Score> findByCompetitionId(Long competitionId) {
+        // 1. 先查场次维度缓存
+        List<Score> cached = scoreCache.getCompetitionScores(competitionId);
+        if (cached != null) {
+            return cached;
+        }
+        // 2. 缓存未命中，查数据库
         LambdaQueryWrapper<Score> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(Score::getCompetitionId, competitionId)
                 .orderByAsc(Score::getId);
-        return scoreMapper.selectList(wrapper);
+        List<Score> scores = scoreMapper.selectList(wrapper);
+        // 3. 回写缓存（含空列表，避免高频查询反复回源）
+        scoreCache.cacheCompetitionScores(competitionId, scores);
+        return scores;
+    }
+
+    /**
+     * 判断指定场次下是否已录入成绩（场次删除前的存在性校验）。
+     * <p>
+     * <b>不走缓存</b>，始终直查数据库以保证删除校验的实时性
+     * （与 EventDAO 的唯一性/引用检查保持一致的红线）。
+     * </p>
+     *
+     * @param competitionId 场次ID
+     * @return 已存在成绩返回 true，否则 false
+     */
+    public boolean existsByCompetitionId(Long competitionId) {
+        LambdaQueryWrapper<Score> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(Score::getCompetitionId, competitionId);
+        return scoreMapper.selectCount(wrapper) > 0;
     }
 
     /**

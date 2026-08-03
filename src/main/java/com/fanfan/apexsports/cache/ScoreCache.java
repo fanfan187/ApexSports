@@ -1,6 +1,8 @@
 package com.fanfan.apexsports.cache;
 
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
@@ -26,8 +28,8 @@ import java.util.Set;
 /**
  * 成绩缓存管理
  * <p>
- * 仅负责「成绩分页列表」与「按场次聚合的成绩列表」两类缓存的生命周期管理。
- * 成绩属于「中写高读」数据（录入后多次查询、排名汇总），对列表与按场次聚合结果
+ * 仅负责「成绩分页结果（含 total）」与「按场次聚合的成绩列表」两类缓存的生命周期管理。
+ * 成绩属于「中写高读」数据（录入后多次查询、排名汇总），对分页结果与按场次聚合结果
  * 做 cache-aside，写操作（录入/修改/删除）由 {@code ScoreDAO} 触发驱逐。
  * </p>
  * <p>
@@ -43,7 +45,11 @@ import java.util.Set;
  *       {@code RedisTemplate<String, Object>} + Jackson JSON（配置见 RedisConfig），
  *       因 {@code GenericJackson2JsonRedisSerializer} 未开启默认类型信息，
  *       反序列化结果是 {@code LinkedHashMap}，需用内部 {@link ObjectMapper#convertValue(Object, Class)}
- *       做二次转换还原为 {@link ScoreDetailVO} 列表或 {@link Score} 列表</li>
+ *       做二次转换还原为 {@link Page} 分页结果或 {@link Score} 列表</li>
+ *   <li>分页结果缓存整个 {@link Page} 对象（records + total + current + size），
+ *       命中后无需回源即可还原完整分页语义；因 {@code Page#getPages()} 为只读派生属性
+ *       （total/size 向上取整，无 setter），序列化会产生 {@code pages} 字段，
+ *       故内部 ObjectMapper 关闭 {@link DeserializationFeature#FAIL_ON_UNKNOWN_PROPERTIES}</li>
  *   <li>驱逐采用 SCAN 而非 KEYS，避免在 key 数量增长时阻塞缓存</li>
  *   <li>写操作（成绩录入/修改/删除）统一驱逐全部列表缓存与该 competitionId 维度的聚合缓存</li>
  * </ul>
@@ -59,7 +65,7 @@ public class ScoreCache {
     // ==================== Key 格式（私有化，不对外暴露） ====================
 
     /**
-     * 成绩分页列表缓存 Key 前缀，完整格式：{@code score:list:{keySuffix}}。
+     * 成绩分页结果缓存 Key 前缀，完整格式：{@code score:list:{keySuffix}}。
      * <p>
      * keySuffix 由调用方（DAO）按分页参数与过滤条件拼装，如 {@code "1_10_5"}
      * 表示 page=1、size=10、competitionId=5（as_score 无 event_id 列，仅按场次过滤）。
@@ -101,7 +107,7 @@ public class ScoreCache {
      * 由于 {@code RedisConfig} 的 {@code GenericJackson2JsonRedisSerializer} 未开启默认类型信息，
      * 反序列化结果是 {@code LinkedHashMap} 而非目标 POJO。这里用与 RedisConfig 一致的时间模块配置，
      * 通过 {@link ObjectMapper#convertValue(Object, Class)} 做二次转换还原为
-     * {@link ScoreDetailVO} 列表或 {@link Score} 列表。
+     * {@link Page} 分页结果或 {@link Score} 列表。
      * </p>
      */
     private final ObjectMapper objectMapper = buildObjectMapper();
@@ -114,40 +120,47 @@ public class ScoreCache {
         javaTimeModule.addDeserializer(LocalDateTime.class, new LocalDateTimeDeserializer(formatter));
         om.registerModule(javaTimeModule);
         om.disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
+        // Page#getPages() 为只读派生属性（无 setter），序列化会产生 "pages" 字段，
+        // 反序列化需容忍未知字段，否则 convertValue 抛 UnrecognizedPropertyException
+        om.disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES);
         return om;
     }
 
-    // ==================== 成绩分页列表缓存 ====================
+    // ==================== 成绩分页结果缓存 ====================
 
     /**
-     * 查询成绩分页列表缓存。
+     * 查询成绩分页结果缓存。
+     * <p>
+     * 缓存对象为完整 {@link Page}（records + total + current + size），
+     * 命中后直接还原分页语义，无需回源补 total。
+     * </p>
      *
-     * @param keySuffix 列表键后缀（由分页参数与过滤条件拼装）
-     * @return 命中则返回成绩详情列表，未命中返回 {@code null}（由调用方 DAO 回源查库）
+     * @param keySuffix 分页键后缀（由分页参数与过滤条件拼装）
+     * @return 命中则返回分页结果，未命中返回 {@code null}（由调用方 DAO 回源查库）
      */
-    public List<ScoreDetailVO> getList(String keySuffix) {
+    public Page<ScoreDetailVO> getPage(String keySuffix) {
         Object cached = redisTemplate.opsForValue().get(LIST_KEY_PREFIX + keySuffix);
         if (cached == null) {
             return null;
         }
-        return objectMapper.convertValue(cached, new TypeReference<List<ScoreDetailVO>>() {});
+        return objectMapper.convertValue(cached, new TypeReference<Page<ScoreDetailVO>>() {});
     }
 
     /**
-     * 写入成绩分页列表缓存。
+     * 写入成绩分页结果缓存（含 total）。
      *
-     * @param keySuffix 列表键后缀
-     * @param data      待缓存的成绩详情列表
+     * @param keySuffix 分页键后缀
+     * @param data      待缓存的分页结果（records + total + current + size）
      */
-    public void cacheList(String keySuffix, List<ScoreDetailVO> data) {
+    public void cachePage(String keySuffix, Page<ScoreDetailVO> data) {
         redisTemplate.opsForValue().set(LIST_KEY_PREFIX + keySuffix, data, CACHE_TTL);
     }
 
     /**
-     * 驱逐全部成绩分页列表缓存。
+     * 驱逐全部成绩分页结果缓存。
      * <p>
-     * 任意成绩写操作（录入/修改/删除）都可能影响任意分页的列表结果，
-     * 因此在写操作时统一调用此方法清空全部列表缓存，保证一致性。
+     * 任意成绩写操作（录入/修改/删除）都可能影响任意分页的结果，
+     * 因此在写操作时统一调用此方法清空全部分页缓存，保证一致性。
      * 实现采用 SCAN 游标扫描而非 KEYS 命令，避免阻塞缓存。
      * </p>
      */
@@ -158,7 +171,7 @@ public class ScoreCache {
     // ==================== 按场次聚合的成绩列表缓存 ====================
 
     /**
-     * 查询指定场次的的成绩列表缓存。
+     * 查询指定场次的成绩列表缓存。
      *
      * @param competitionId 场次ID
      * @return 命中则返回该场次下的成绩实体列表，未命中返回 {@code null}
