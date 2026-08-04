@@ -35,6 +35,9 @@ import java.util.List;
  *   <li>{@link #findEventScoreDetails}：单学院成绩明细，无缓存（明细数据量小且变更频繁，直接查库）。</li>
  *   <li>{@link #fullRecalculate}：@Transactional 原子流程，物理清空 + 聚合 INSERT + 统计，
  *       返回 {@link FullRecalcResult} 供 Logic 组装刷新结果 VO。</li>
+ *   <li>{@link #evictAllRankings} / {@link #tryAcquireRefreshLock} / {@link #releaseRefreshLock}：
+ *       缓存生命周期委托方法，供 Logic 层全量刷新流程（拿锁 → 重算 → 驱逐 → 放锁）调用，
+ *       保持 Logic → DAO → Cache 的统一分层链路，Logic 层不直接依赖 Cache 层。</li>
  * </ul>
  * 增量写路径的缓存驱逐经 {@link CacheEvictionUtil#evictAfterCommit} 推迟到事务提交后执行，
  * 避免「事务未提交先驱逐 → 并发读回源旧数据回填缓存」的竞态
@@ -47,7 +50,7 @@ import java.util.List;
  * </p>
  *
  * @author fanfan187
- * @version v1.1.0
+ * @version v1.2.0
  * @since v1.0.0
  */
 @Slf4j
@@ -280,9 +283,10 @@ public class CollegeScoreSummaryDAO {
      * </p>
      * <p>
      * <b>缓存驱逐与分布式锁：</b>本方法只负责数据重算，不驱逐缓存、不获取刷新锁；
-     * 由调用方 Logic 层在 {@code finally} 中调用 {@link CollegeScoreSummaryCache#evictAll}
-     * 驱逐缓存，并用 {@link CollegeScoreSummaryCache#tryAcquireRefreshLock} /
-     * {@link CollegeScoreSummaryCache#releaseRefreshLock} 保证刷新互斥。
+     * 由调用方 Logic 层在 {@code finally} 中调用 {@link #evictAllRankings()}
+     * 驱逐缓存，并用 {@link #tryAcquireRefreshLock()} /
+     * {@link #releaseRefreshLock()} 保证刷新互斥（均经本 DAO 委托方法，
+     * Logic 层不直接依赖 Cache 层）。
      * </p>
      *
      * @return 重算结果（受影响学院数 + 参与排名的不同项目数），供 Logic 组装刷新结果 VO
@@ -302,5 +306,44 @@ public class CollegeScoreSummaryDAO {
      * @param totalEvents      参与排名的不同项目数
      */
     public record FullRecalcResult(int affectedColleges, int totalEvents) {
+    }
+
+    // ==================== 缓存生命周期委托方法（供 Logic 层调用） ====================
+
+    /**
+     * 驱逐全部排名缓存（列表 + 单学院行）。
+     * <p>
+     * 委托 {@link CollegeScoreSummaryCache#evictAll()}，供 Logic 层在全量重算完成后驱逐缓存，
+     * 保证下次查询回源取最新数据。驱逐经 {@link CacheEvictionUtil#evictAfterCommit} 推迟到
+     * 事务提交后执行，与调用方事务边界对齐，避免「事务未提交先驱逐 → 并发读回源旧数据回填」
+     * 的竞态；无活动事务时立即执行，语义与同步驱逐一致。
+     * </p>
+     */
+    public void evictAllRankings() {
+        CacheEvictionUtil.evictAfterCommit(cache::evictAll);
+    }
+
+    /**
+     * 尝试获取积分刷新锁（不等待）。
+     * <p>
+     * 委托 {@link CollegeScoreSummaryCache#tryAcquireRefreshLock()}，供 Logic 层在手动全量
+     * 刷新流程入口做互斥控制，保证同一时刻只有一个刷新任务执行。调用方必须确保在
+     * {@code finally} 块中调用 {@link #releaseRefreshLock()}，避免锁泄漏。
+     * </p>
+     *
+     * @return 获取成功返回 {@code true}，已被其他线程持有返回 {@code false}
+     */
+    public boolean tryAcquireRefreshLock() {
+        return cache.tryAcquireRefreshLock();
+    }
+
+    /**
+     * 释放积分刷新锁。
+     * <p>
+     * 委托 {@link CollegeScoreSummaryCache#releaseRefreshLock()}，仅当锁由当前线程持有时释放。
+     * </p>
+     */
+    public void releaseRefreshLock() {
+        cache.releaseRefreshLock();
     }
 }

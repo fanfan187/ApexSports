@@ -1,6 +1,5 @@
 package com.fanfan.apexsports.logic;
 
-import com.fanfan.apexsports.cache.CollegeScoreSummaryCache;
 import com.fanfan.apexsports.config.UserContext;
 import com.fanfan.apexsports.constants.ScoreConstants;
 import com.fanfan.apexsports.constants.UserConstants;
@@ -33,15 +32,17 @@ import java.util.List;
  * <b>架构红线遵守：</b>
  * <ul>
  *   <li>Logic 层不直接调用 Mapper，所有数据访问通过 {@link CollegeScoreSummaryDAO} / {@link CollegeDAO}；</li>
- *   <li>Logic 层不直接操作缓存中间件，缓存生命周期（刷新锁 + 缓存驱逐）通过
- *       {@link CollegeScoreSummaryCache} 暴露的业务语义方法完成；</li>
+ *   <li>Logic 层不直接操作缓存，缓存生命周期（刷新锁 + 缓存驱逐）通过
+ *       {@link CollegeScoreSummaryDAO} 的委托方法（{@code tryAcquireRefreshLock} /
+ *       {@code releaseRefreshLock} / {@code evictAllRankings}）完成，
+ *       保持 Logic → DAO → Cache 的统一链路；</li>
  *   <li>Logic 层不出现底层存储/缓存中间件相关字样；</li>
  *   <li>DO 实体不作为方法返回值，统一转换为 VO。</li>
  * </ul>
  * </p>
  *
  * @author fanfan187
- * @version v1.0.0
+ * @version v1.1.0
  * @since v1.0.0
  */
 @Slf4j
@@ -53,7 +54,6 @@ public class RankingLogic implements RankingService {
 
     private final CollegeScoreSummaryDAO collegeScoreSummaryDAO;
     private final CollegeDAO collegeDAO;
-    private final CollegeScoreSummaryCache collegeScoreSummaryCache;
 
     // ==================== 接口82: 学院排名列表 ====================
 
@@ -150,7 +150,9 @@ public class RankingLogic implements RankingService {
      * 校验管理员权限 → 尝试获取刷新锁（不等待，拿不到抛
      * {@link ErrorCode#SCORE_REFRESH_IN_PROGRESS}）→ 调用 DAO 全量重算
      * （物理清空 + 聚合 INSERT，事务由 DAO 层 {@code @Transactional} 保证）→
-     * 组装 {@link ScoreRefreshResultVO} → {@code finally} 中释放刷新锁并驱逐全部排名缓存，
+     * 组装 {@link ScoreRefreshResultVO} → {@code finally} 中先驱逐全部排名缓存、
+     * 再释放刷新锁（先驱逐后放锁，避免下一轮刷新在驱逐完成前启动；
+     * 均通过 {@link CollegeScoreSummaryDAO} 委托方法，Logic 不直接依赖 Cache 层），
      * 保证下次查询回源取最新数据。
      * </p>
      *
@@ -160,7 +162,7 @@ public class RankingLogic implements RankingService {
     public ScoreRefreshResultVO refreshScores() {
         checkAdmin();
 
-        boolean acquired = collegeScoreSummaryCache.tryAcquireRefreshLock();
+        boolean acquired = collegeScoreSummaryDAO.tryAcquireRefreshLock();
         if (!acquired) {
             throw new BusinessException(ErrorCode.SCORE_REFRESH_IN_PROGRESS);
         }
@@ -176,8 +178,8 @@ public class RankingLogic implements RankingService {
                     result.affectedColleges(),
                     result.totalEvents());
         } finally {
-            collegeScoreSummaryCache.releaseRefreshLock();
-            collegeScoreSummaryCache.evictAll();
+            collegeScoreSummaryDAO.evictAllRankings();
+            collegeScoreSummaryDAO.releaseRefreshLock();
         }
     }
 

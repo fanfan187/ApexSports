@@ -36,15 +36,15 @@ import java.util.concurrent.TimeUnit;
  * <p>
  * 内部私有化 Key 格式、TTL 策略与序列化方式，对外只暴露业务语义方法，
  * 严格遵守「Cache 层之外不得直接操作缓存」与「Redis 不得出现在 Logic 层」红线。
- * {@link RedissonClient}/{@link RLock} 仅在本类内部使用，Logic 层调用方
- * 仅见到 {@code tryAcquireRefreshLock()} / {@code releaseRefreshLock()}，
- * 不感知底层锁实现。
+ * {@link RedissonClient}/{@link RLock} 仅在本类内部使用，不对外暴露；
+ * Logic 层经 {@code CollegeScoreSummaryDAO} 的委托方法间接使用刷新锁与驱逐能力
+ * （Logic → DAO → Cache 链路），不感知底层锁实现，也不直接依赖本类。
  * </p>
  *
  * <h3>设计决策</h3>
  * <ul>
  *   <li>排名为「低写高读」数据，TTL 设为 30 分钟，与 {@link ScoreCache} 一致，
- *       兼顾新鲜度与命中率；刷新后由 DAO/Logic 触发 {@link #evictAll()} 立即失效</li>
+ *       兼顾新鲜度与命中率；刷新后由 DAO 层触发 {@link #evictAll()} 立即失效</li>
  *   <li>序列化方式与 {@link ScoreCache} / {@link CompetitionCache} 一致：
  *       {@code RedisTemplate<String, Object>} + Jackson JSON（配置见 RedisConfig），
  *       因 {@code GenericJackson2JsonRedisSerializer} 未开启默认类型信息，
@@ -85,9 +85,8 @@ public class CollegeScoreSummaryCache {
     /**
      * 积分刷新分布式锁 Key。
      * <p>
-     * 锁语义属缓存一致性范畴，由本 Cache 类持有；Logic 层调用
-     * {@link #tryAcquireRefreshLock()} / {@link #releaseRefreshLock()}，
-     * 不感知底层 Redisson 实现。
+     * 锁语义属缓存一致性范畴，由本 Cache 类持有；Logic 层经
+     * {@code CollegeScoreSummaryDAO} 委托方法间接调用，不感知底层 Redisson 实现。
      * </p>
      */
     private static final String REFRESH_LOCK_KEY = "ranking:refresh:lock";
